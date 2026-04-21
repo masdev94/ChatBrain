@@ -1,0 +1,51 @@
+[project]
+name = "chatbrain-backend"
+version = "0.1.0"
+description = "ChatBrain FastAPI backend: knowledge-base ingestion and RAG chat over Supabase"
+requires-python = ">=3.11"
+readme = "README.md"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "python-multipart>=0.0.12",
+    "httpx>=0.27",
+    "supabase>=2.9",
+    "openai>=1.54",
+    "tiktoken>=0.8",
+    "pymupdf>=1.24",
+    "trafilatura>=1.12",
+    "pyjwt[crypto]>=2.9",
+    "tenacity>=9.0",
+    "structlog>=24.4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-mock>=3.14",
+    "ruff>=0.7",
+    "respx>=0.21",
+]
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = "-ra"
+testpaths = ["tests"]
