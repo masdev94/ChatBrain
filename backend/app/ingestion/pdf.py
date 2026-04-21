@@ -47,7 +47,9 @@ async def extract_pdf(data: bytes) -> PdfResult:
     except Exception as exc:  # pymupdf raises various exception types
         raise PdfExtractionError(f"Could not open PDF: {exc}") from exc
 
-    if doc.page_count == 0:
+    page_count = doc.page_count
+    if page_count == 0:
+        doc.close()
         raise PdfExtractionError("PDF has no pages")
 
     page_texts: list[str] = []
@@ -85,7 +87,7 @@ async def extract_pdf(data: bytes) -> PdfResult:
             "No text could be extracted from the PDF (empty or OCR failed on every page)."
         )
 
-    return PdfResult(text=combined, page_count=doc.page_count, ocr_pages=ocr_pages)
+    return PdfResult(text=combined, page_count=page_count, ocr_pages=ocr_pages)
 
 
 async def _vision_ocr(page: "pymupdf.Page", client: AsyncOpenAI) -> str:
