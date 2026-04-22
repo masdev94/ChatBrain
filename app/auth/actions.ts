@@ -14,7 +14,14 @@ function validate(email: string, password: string): string | null {
   return null;
 }
 
-export async function signInAction(formData: FormData): Promise<AuthResult> {
+// Signature matches what `useActionState` calls with: (prevState, formData).
+// Passing the server action directly to `useActionState` preserves progressive
+// enhancement and avoids a client-side wrapper that can mask redirect errors
+// as "An unexpected response was received from the server."
+export async function signInAction(
+  _prev: AuthResult | null,
+  formData: FormData,
+): Promise<AuthResult> {
   const email = String(formData.get("email") ?? "").trim();
   const password = String(formData.get("password") ?? "");
   const next = String(formData.get("next") ?? "/app");
@@ -29,7 +36,10 @@ export async function signInAction(formData: FormData): Promise<AuthResult> {
   redirect(next.startsWith("/") ? next : "/app");
 }
 
-export async function signUpAction(formData: FormData): Promise<AuthResult> {
+export async function signUpAction(
+  _prev: AuthResult | null,
+  formData: FormData,
+): Promise<AuthResult> {
   const email = String(formData.get("email") ?? "").trim();
   const password = String(formData.get("password") ?? "");
 

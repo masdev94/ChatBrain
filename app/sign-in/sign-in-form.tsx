@@ -2,17 +2,10 @@
 
 import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
-import { signInAction, type AuthResult } from "@/app/auth/actions";
-
-async function onSubmit(
-  _prev: AuthResult | null,
-  formData: FormData,
-): Promise<AuthResult | null> {
-  return await signInAction(formData);
-}
+import { signInAction } from "@/app/auth/actions";
 
 export function SignInForm({ next }: { next: string }) {
-  const [state, action] = useActionState(onSubmit, null);
+  const [state, action] = useActionState(signInAction, null);
 
   return (
     <form action={action} className="space-y-4">
