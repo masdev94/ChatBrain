@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+/* Tailwind v4 auto-scans the project tree for utility classes. The Python
+   backend contains no UI, and pytest drops cache folders with restrictive
+   ACLs that cause Turbopack to panic on Windows. Exclude it explicitly. */
+@source not "../backend";
+
 /* ─────────────────────────────────────────────────────────────────────────
    Design tokens
    Cool Tech dark palette with a restrained amber spark accent.
