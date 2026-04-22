@@ -1,30 +1,111 @@
 @import "tailwindcss";
 
+/* ─────────────────────────────────────────────────────────────────────────
+   Design tokens
+   Cool Tech dark palette with a restrained amber spark accent.
+   Inspired by Linear × Anthropic × Raycast — calm, technical, deliberate.
+   ───────────────────────────────────────────────────────────────────────── */
 :root {
-  --background: #0b0d12;
-  --surface: #121620;
-  --surface-2: #1a1f2c;
-  --border: #242a38;
-  --border-strong: #323a4c;
-  --foreground: #e8eaf0;
-  --foreground-muted: #9aa3b2;
-  --accent: #7c9cff;
-  --accent-strong: #93adff;
-  --danger: #ff6b6b;
-  --success: #4ade80;
-  --warning: #facc15;
+  /* Neutrals */
+  --bg-primary: #0a0c12;
+  --bg-secondary: #101522;
+  --bg-tertiary: #151b2b;
+  --surface: #141826;
+  --surface-2: #1a2033;
+  --border: #232a3f;
+  --border-strong: #313a55;
+  --text-primary: #e7ebf3;
+  --text-secondary: #9aa3b8;
+  --text-tertiary: #5f6782;
+
+  /* Primary (calm cool) */
+  --primary: #7c9cff;
+  --primary-hover: #94adff;
+  --primary-subtle: rgba(124, 156, 255, 0.14);
+  --primary-ring: rgba(124, 156, 255, 0.32);
+
+  /* Spark (warm amber) — used sparingly: streaming caret, active marker */
+  --accent: #f4b860;
+  --accent-hover: #ffc878;
+  --accent-subtle: rgba(244, 184, 96, 0.14);
+
+  /* Semantic */
+  --success: #58d6a3;
+  --warning: #f4b860;
+  --danger: #ff6b7a;
+  --info: #7cc6ff;
+
+  /* Type scale */
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
+  --text-3xl: 1.875rem;
+  --text-4xl: 2.25rem;
+  --text-5xl: 3rem;
+  --text-6xl: 3.75rem;
+
+  /* Spacing */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+  --space-20: 5rem;
+  --space-24: 6rem;
+
+  /* Radii */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+  --radius-2xl: 22px;
+
+  /* Shadows — layered for perceived depth without being heavy */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-md:
+    0 1px 2px rgba(0, 0, 0, 0.3),
+    0 8px 24px rgba(0, 0, 0, 0.28);
+  --shadow-lg:
+    0 2px 6px rgba(0, 0, 0, 0.35),
+    0 20px 48px rgba(0, 0, 0, 0.42);
+  --shadow-focus: 0 0 0 3px var(--primary-ring);
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-spring: cubic-bezier(0.34, 1.3, 0.64, 1);
+  --dur-fast: 120ms;
+  --dur-med: 220ms;
+  --dur-slow: 360ms;
+  --dur-reveal: 520ms;
 }
 
+/* ─────────────────────────────────────────────────────────────────────────
+   Tailwind theme bridge — expose the tokens as Tailwind colors so existing
+   utility classes (bg-surface, text-foreground, border-border, etc.) keep
+   working unchanged against the refined palette.
+   ───────────────────────────────────────────────────────────────────────── */
 @theme inline {
-  --color-background: var(--background);
+  --color-background: var(--bg-primary);
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
   --color-border: var(--border);
   --color-border-strong: var(--border-strong);
-  --color-foreground: var(--foreground);
-  --color-foreground-muted: var(--foreground-muted);
-  --color-accent: var(--accent);
-  --color-accent-strong: var(--accent-strong);
+  --color-foreground: var(--text-primary);
+  --color-foreground-muted: var(--text-secondary);
+  --color-foreground-subtle: var(--text-tertiary);
+  --color-accent: var(--primary);
+  --color-accent-strong: var(--primary-hover);
+  --color-spark: var(--accent);
+  --color-spark-strong: var(--accent-hover);
   --color-danger: var(--danger);
   --color-success: var(--success);
   --color-warning: var(--warning);
@@ -32,13 +113,17 @@
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 }
 
+/* ─────────────────────────────────────────────────────────────────────────
+   Base
+   ───────────────────────────────────────────────────────────────────────── */
 html,
 body {
-  background: var(--background);
-  color: var(--foreground);
+  background: var(--bg-primary);
+  color: var(--text-primary);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  font-feature-settings: "cv11", "ss01", "ss03";
 }
 
 * {
@@ -46,10 +131,10 @@ body {
 }
 
 ::selection {
-  background: color-mix(in oklab, var(--accent) 40%, transparent);
+  background: color-mix(in oklab, var(--primary) 40%, transparent);
 }
 
-/* Custom scrollbar */
+/* Scrollbar — thin, subtle, themed */
 *::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -57,12 +142,121 @@ body {
 *::-webkit-scrollbar-thumb {
   background: var(--border-strong);
   border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklab, var(--border-strong) 70%, var(--text-secondary));
+  background-clip: padding-box;
+  border: 2px solid transparent;
 }
 *::-webkit-scrollbar-track {
   background: transparent;
 }
 
-/* A blinking caret used after the last assistant token while streaming. */
+/* Focus ring — consistent 2px offset against the surrounding surface. */
+.focus-ring:focus-visible,
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+[tabindex]:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+  border-radius: inherit;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Backdrop decorations — depth without noise.
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* Subtle procedural grain. Fixed-position so it doesn't move with scroll. */
+.noise-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.04;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* One large blurred gradient orb. Positioned top-left by default; variants
+   adjust placement. Use on hero surfaces to imply depth. */
+.orb {
+  position: absolute;
+  width: 520px;
+  height: 520px;
+  border-radius: 50%;
+  filter: blur(90px);
+  opacity: 0.45;
+  pointer-events: none;
+  z-index: 0;
+  background: radial-gradient(
+    closest-side,
+    color-mix(in oklab, var(--primary) 55%, transparent),
+    transparent
+  );
+}
+.orb--amber {
+  background: radial-gradient(
+    closest-side,
+    color-mix(in oklab, var(--accent) 40%, transparent),
+    transparent
+  );
+  opacity: 0.28;
+}
+.orb--small {
+  width: 320px;
+  height: 320px;
+  filter: blur(70px);
+}
+
+/* Soft dot-grid used on empty canvases. */
+.dot-grid {
+  background-image: radial-gradient(
+    circle,
+    color-mix(in oklab, var(--border-strong) 70%, transparent) 1px,
+    transparent 1px
+  );
+  background-size: 24px 24px;
+  background-position: 0 0;
+}
+
+/* Elevated surface (card with layered shadow) */
+.surface-elevated {
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--surface) 100%, transparent) 0%,
+    color-mix(in oklab, var(--surface) 92%, var(--bg-primary)) 100%
+  );
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-md);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Motion
+   ───────────────────────────────────────────────────────────────────────── */
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.fade-up {
+  animation: fadeUp var(--dur-reveal) var(--ease-out) both;
+}
+.delay-1 { animation-delay: 60ms; }
+.delay-2 { animation-delay: 120ms; }
+.delay-3 { animation-delay: 180ms; }
+.delay-4 { animation-delay: 240ms; }
+.delay-5 { animation-delay: 320ms; }
+.delay-6 { animation-delay: 420ms; }
+
 @keyframes caret {
   0%,
   100% {
@@ -76,15 +270,47 @@ body {
   content: "▍";
   margin-left: 2px;
   animation: caret 1s steps(1) infinite;
-  color: var(--accent);
+  color: var(--accent); /* amber spark: signals live streaming */
 }
 
-/* Markdown output for assistant answers. Styled to match the rest of the
-   dark theme without pulling in @tailwindcss/typography. */
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--surface-2) 0%,
+    color-mix(in oklab, var(--surface-2) 60%, var(--border-strong)) 50%,
+    var(--surface-2) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+  border-radius: var(--radius-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Markdown prose for assistant answers
+   ───────────────────────────────────────────────────────────────────────── */
 .answer-prose {
-  font-size: 15px;
-  line-height: 1.65;
-  color: var(--foreground);
+  font-size: var(--text-base);
+  line-height: 1.7;
+  color: var(--text-primary);
   word-wrap: break-word;
 }
 .answer-prose > * + * {
@@ -94,20 +320,21 @@ body {
 .answer-prose h2,
 .answer-prose h3,
 .answer-prose h4 {
-  font-weight: 600;
-  line-height: 1.3;
-  color: var(--foreground);
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
 }
 .answer-prose h1 {
-  font-size: 1.25rem;
+  font-size: var(--text-xl);
   margin-top: 1.25rem;
 }
 .answer-prose h2 {
-  font-size: 1.125rem;
+  font-size: var(--text-lg);
   margin-top: 1.1rem;
 }
 .answer-prose h3 {
-  font-size: 1rem;
+  font-size: var(--text-base);
   margin-top: 1rem;
 }
 .answer-prose h4 {
@@ -118,20 +345,22 @@ body {
   margin: 0;
 }
 .answer-prose strong {
-  color: var(--foreground);
-  font-weight: 600;
+  color: var(--text-primary);
+  font-weight: 700;
 }
 .answer-prose em {
   font-style: italic;
+  color: var(--text-primary);
 }
 .answer-prose a {
-  color: var(--accent);
+  color: var(--primary);
   text-decoration: underline;
-  text-underline-offset: 2px;
+  text-underline-offset: 3px;
   text-decoration-thickness: 1px;
+  transition: color var(--dur-fast) var(--ease-out);
 }
 .answer-prose a:hover {
-  color: var(--accent-strong);
+  color: var(--primary-hover);
 }
 .answer-prose ul,
 .answer-prose ol {
@@ -153,9 +382,7 @@ body {
   display: list-item;
   margin-top: 0.25rem;
 }
-.answer-prose ul > li {
-  list-style-type: inherit;
-}
+.answer-prose ul > li,
 .answer-prose ol > li {
   list-style-type: inherit;
 }
@@ -164,25 +391,25 @@ body {
   margin-top: 0.25rem;
 }
 .answer-prose li::marker {
-  color: var(--foreground-muted);
+  color: var(--text-tertiary);
 }
 .answer-prose code {
   font-family: var(--font-mono);
   font-size: 0.875em;
-  padding: 0.12em 0.35em;
+  padding: 0.12em 0.4em;
   background: var(--surface-2);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 .answer-prose pre {
   font-family: var(--font-mono);
   font-size: 0.85em;
   background: var(--surface-2);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 0.75rem 1rem;
+  border-radius: var(--radius-md);
+  padding: 0.85rem 1rem;
   overflow-x: auto;
-  line-height: 1.55;
+  line-height: 1.6;
 }
 .answer-prose pre code {
   background: transparent;
@@ -192,8 +419,8 @@ body {
 }
 .answer-prose blockquote {
   border-left: 3px solid var(--border-strong);
-  padding-left: 0.75rem;
-  color: var(--foreground-muted);
+  padding-left: 0.85rem;
+  color: var(--text-secondary);
 }
 .answer-prose hr {
   border: 0;
@@ -203,13 +430,14 @@ body {
 .answer-prose table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.9em;
+  font-size: 0.92em;
 }
 .answer-prose th,
 .answer-prose td {
   border: 1px solid var(--border);
-  padding: 0.45rem 0.6rem;
+  padding: 0.5rem 0.7rem;
   text-align: left;
+  vertical-align: top;
 }
 .answer-prose th {
   background: var(--surface-2);

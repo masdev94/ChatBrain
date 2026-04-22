@@ -15,20 +15,28 @@ export function SignUpForm() {
   const [state, action] = useActionState(onSubmit, null);
 
   return (
-    <form action={action} className="space-y-3">
-      <Field label="Email" name="email" type="email" autoComplete="email" />
+    <form action={action} className="space-y-4">
+      <Field
+        label="Email"
+        name="email"
+        type="email"
+        autoComplete="email"
+        placeholder="you@domain.com"
+      />
       <Field
         label="Password"
         name="password"
         type="password"
         autoComplete="new-password"
         minLength={8}
+        placeholder="At least 8 characters"
+        helper="Use a mix of letters, numbers, and symbols for a stronger password."
       />
-      <p className="text-xs text-foreground-muted">
-        At least 8 characters.
-      </p>
       {state?.error ? (
-        <p className="text-sm text-danger" role="alert">
+        <p
+          role="alert"
+          className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger"
+        >
           {state.error}
         </p>
       ) : null}
@@ -43,24 +51,40 @@ function Field({
   type,
   autoComplete,
   minLength,
+  placeholder,
+  helper,
 }: {
   label: string;
   name: string;
   type: string;
   autoComplete?: string;
   minLength?: number;
+  placeholder?: string;
+  helper?: string;
 }) {
   return (
     <label className="block">
-      <span className="block text-sm text-foreground-muted mb-1">{label}</span>
+      <span className="block text-[13px] font-medium text-foreground mb-1.5">
+        {label}
+      </span>
       <input
         name={name}
         type={type}
         required
         autoComplete={autoComplete}
         minLength={minLength}
-        className="w-full rounded-md border border-border bg-surface-2 px-3 py-2 text-foreground focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/30 transition"
+        placeholder={placeholder}
+        className="w-full h-11 rounded-md border border-border bg-surface-2 px-3 text-sm text-foreground placeholder:text-foreground-subtle focus:outline-none focus:border-accent/60"
+        style={{
+          transition:
+            "border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out)",
+        }}
       />
+      {helper ? (
+        <span className="block mt-1.5 text-[11.5px] text-foreground-subtle">
+          {helper}
+        </span>
+      ) : null}
     </label>
   );
 }
@@ -71,7 +95,11 @@ function Submit({ children }: { children: React.ReactNode }) {
     <button
       type="submit"
       disabled={pending}
-      className="w-full rounded-md bg-accent hover:bg-accent-strong text-[#0b0d12] font-medium py-2 transition disabled:opacity-60 disabled:cursor-not-allowed"
+      className="w-full h-11 rounded-md bg-accent hover:bg-accent-strong text-[#0b0d12] font-medium text-sm disabled:opacity-60 disabled:cursor-not-allowed"
+      style={{
+        transition:
+          "background-color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out)",
+      }}
     >
       {pending ? "Creating…" : children}
     </button>

@@ -238,12 +238,9 @@ export function ChatView({ conversationId }: { conversationId: string }) {
         </div>
       ) : null}
 
-      <div
-        ref={scrollRef}
-        className="flex-1 overflow-y-auto"
-      >
-        <div className="mx-auto max-w-3xl px-4 md:px-6 py-6 space-y-6">
-          {empty ? <ChatEmpty /> : null}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto">
+        <div className="mx-auto max-w-3xl px-4 md:px-6 py-8 space-y-6">
+          {empty ? <ChatEmpty onPick={(q) => setInput(q)} /> : null}
           {items.map((it, i) =>
             it.kind === "stored" ? (
               <StoredMessage key={it.message.id} message={it.message} />
@@ -254,37 +251,73 @@ export function ChatView({ conversationId }: { conversationId: string }) {
         </div>
       </div>
 
-      <div className="border-t border-border bg-background/80 backdrop-blur px-4 py-3">
+      {/* Composer — single layered surface with primary-ring focus glow. */}
+      <div className="border-t border-border bg-[color-mix(in_oklab,var(--bg-primary)_82%,transparent)] backdrop-blur-md px-4 py-3.5">
         <div className="mx-auto max-w-3xl">
-          <div className="flex items-end gap-2 rounded-xl border border-border bg-surface focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/30 transition">
+          <div
+            className="group flex items-end gap-2 rounded-xl border border-border bg-surface shadow-sm focus-within:border-accent/70"
+            style={{
+              transition:
+                "border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out)",
+              boxShadow: "var(--shadow-sm)",
+            }}
+          >
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={onKeyDown}
               rows={1}
               placeholder="Ask anything about your knowledge base…"
-              className="flex-1 resize-none bg-transparent px-3 py-3 text-sm focus:outline-none max-h-48"
+              className="flex-1 resize-none bg-transparent px-4 py-3 text-[15px] leading-relaxed focus:outline-none max-h-48 placeholder:text-foreground-subtle"
             />
             {streaming ? (
               <button
                 onClick={() => abortRef.current?.abort()}
-                className="m-1.5 rounded-md bg-surface-2 hover:bg-border text-foreground-muted hover:text-foreground px-3 py-2 text-sm transition"
+                className="m-1.5 inline-flex items-center gap-1.5 rounded-md bg-surface-2 hover:bg-border text-foreground-muted hover:text-foreground px-3 h-9 text-sm"
+                style={{
+                  transition:
+                    "background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out)",
+                }}
               >
+                <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden>
+                  <rect x="2" y="2" width="8" height="8" rx="1.5" fill="currentColor" />
+                </svg>
                 Stop
               </button>
             ) : (
               <button
                 onClick={send}
                 disabled={!input.trim()}
-                className="m-1.5 rounded-md bg-accent hover:bg-accent-strong text-[#0b0d12] font-medium px-3 py-2 text-sm transition disabled:opacity-40 disabled:cursor-not-allowed"
+                aria-label="Send message"
+                className="m-1.5 inline-flex items-center gap-1.5 rounded-md bg-accent hover:bg-accent-strong text-[#0b0d12] font-medium px-3.5 h-9 text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{
+                  transition:
+                    "background-color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out)",
+                }}
               >
                 Send
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <path
+                    stroke="currentColor"
+                    strokeWidth="2.2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M5 12h14M13 6l6 6-6 6"
+                  />
+                </svg>
               </button>
             )}
           </div>
-          <p className="mt-2 text-[11px] text-foreground-muted text-center">
-            Answers are grounded in your knowledge base. Enter sends,
-            Shift+Enter for newline.
+          <p className="mt-2 text-[11.5px] text-foreground-subtle text-center">
+            Grounded in your sources.{" "}
+            <kbd className="px-1 py-0.5 rounded border border-border bg-surface-2 text-[10.5px] font-mono text-foreground-muted">
+              Enter
+            </kbd>{" "}
+            to send,{" "}
+            <kbd className="px-1 py-0.5 rounded border border-border bg-surface-2 text-[10.5px] font-mono text-foreground-muted">
+              Shift+Enter
+            </kbd>{" "}
+            for newline.
           </p>
         </div>
       </div>
@@ -324,7 +357,7 @@ function AssistantStream({ message }: { message: StreamingMessage }) {
 function UserBubble({ content }: { content: string }) {
   return (
     <div className="flex justify-end">
-      <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-accent/90 text-[#0b0d12] px-4 py-2.5 text-sm whitespace-pre-wrap">
+      <div className="max-w-[85%] rounded-2xl rounded-br-md bg-accent text-[#0b0d12] px-4 py-2.5 text-[14.5px] leading-relaxed whitespace-pre-wrap shadow-sm">
         {content}
       </div>
     </div>
@@ -345,23 +378,35 @@ function AssistantBubble({
   error?: string;
 }) {
   return (
-    <div className="flex">
-      <div className="max-w-full w-full">
+    <div className="flex gap-3">
+      {/* Avatar rail — a small amber dot doubles as "this is the assistant"
+          and echoes the streaming-caret color language. */}
+      <div aria-hidden className="shrink-0 pt-1.5">
+        <span className="inline-block h-7 w-7 rounded-full border border-border bg-surface grid place-items-center">
+          <span className="h-2 w-2 rounded-full bg-spark" />
+        </span>
+      </div>
+      <div className="min-w-0 flex-1">
         {reasoning.length > 0 || streaming ? (
           <ThinkingPanel reasoning={reasoning} streaming={streaming} />
         ) : null}
         {error ? (
-          <div className="mt-2 rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
+          <div
+            role="alert"
+            className="mt-2 rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger"
+          >
             {error}
           </div>
         ) : null}
         {content ? (
-          <div className="mt-2 rounded-2xl border border-border bg-surface px-4 py-3">
+          <div className="mt-2.5 rounded-2xl rounded-tl-md border border-border bg-surface px-5 py-4 shadow-sm">
             <AnswerText content={content} streaming={streaming} />
           </div>
         ) : streaming ? (
-          <div className="mt-2 rounded-2xl border border-border bg-surface px-4 py-3">
-            <span className="stream-caret text-foreground-muted text-sm">Composing answer</span>
+          <div className="mt-2.5 rounded-2xl rounded-tl-md border border-border bg-surface px-5 py-4">
+            <span className="stream-caret text-foreground-muted text-sm">
+              Composing answer
+            </span>
           </div>
         ) : null}
         {citations.length > 0 ? <CitationsBar citations={citations} /> : null}
@@ -383,44 +428,69 @@ function ThinkingPanel({
 }) {
   const [open, setOpen] = useState(true);
   return (
-    <div className="rounded-2xl border border-border bg-surface/60">
+    <div className="rounded-2xl rounded-tl-md border border-border bg-surface/50">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-foreground-muted hover:text-foreground transition"
+        aria-expanded={open}
+        className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-foreground-muted hover:text-foreground"
+        style={{
+          transition:
+            "color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out)",
+        }}
       >
         <span className="inline-flex h-5 w-5 items-center justify-center">
           {streaming ? (
             <svg
               viewBox="0 0 24 24"
-              className="animate-spin h-4 w-4 text-accent"
+              className="animate-spin h-4 w-4 text-spark"
               aria-hidden
             >
-              <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeDasharray="36 20" fill="none" />
+              <circle
+                cx="12"
+                cy="12"
+                r="9"
+                stroke="currentColor"
+                strokeWidth="2.4"
+                strokeLinecap="round"
+                strokeDasharray="36 20"
+                fill="none"
+              />
             </svg>
           ) : (
             <svg viewBox="0 0 24 24" className="h-4 w-4 text-success" aria-hidden>
-              <path fill="currentColor" d="M9 16.2l-3.5-3.5L4 14.2l5 5 11-11-1.5-1.5z" />
+              <path
+                fill="currentColor"
+                d="M9 16.2l-3.5-3.5L4 14.2l5 5 11-11-1.5-1.5z"
+              />
             </svg>
           )}
         </span>
-        <span className="font-medium">
+        <span className="font-medium text-foreground tracking-tight">
           {streaming ? "Thinking" : "Thought process"}
         </span>
-        <span className="ml-auto text-xs">
+        {reasoning.length > 0 ? (
+          <span className="text-[11px] text-foreground-subtle tabular-nums">
+            {reasoning.filter((r) => r.type === "thinking").length} steps
+          </span>
+        ) : null}
+        <span className="ml-auto text-[11px] text-foreground-subtle">
           {open ? "Hide" : "Show"}
         </span>
       </button>
       {open ? (
-        <div className="px-4 pb-3 space-y-2 text-sm">
+        <div className="px-4 pb-3.5 pt-1 space-y-2.5 text-[13.5px] border-t border-border/60">
           {reasoning.map((r, i) =>
             r.type === "thinking" ? (
-              <div key={i} className="flex gap-2 text-foreground-muted">
-                <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-accent/70" />
-                <span>{r.text}</span>
+              <div key={i} className="flex gap-2.5 text-foreground-muted pt-2">
+                <span
+                  aria-hidden
+                  className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-spark/80"
+                />
+                <span className="leading-relaxed">{r.text}</span>
               </div>
             ) : r.type === "sources_considered" && r.sources?.length ? (
-              <div key={i} className="pl-3.5">
-                <div className="text-xs text-foreground-muted mb-1.5">
+              <div key={i} className="pl-4 pt-1">
+                <div className="text-[10.5px] uppercase tracking-wider text-foreground-subtle font-medium mb-1.5">
                   Sources considered
                 </div>
                 <div className="flex flex-wrap gap-1.5">
@@ -432,7 +502,7 @@ function ThinkingPanel({
                     >
                       <TypeDot type={s.type} />
                       <span className="truncate max-w-[16rem]">{s.title}</span>
-                      <span className="text-foreground-muted">
+                      <span className="text-foreground-subtle tabular-nums">
                         {Math.round(s.top_similarity * 100)}%
                       </span>
                     </span>
@@ -578,17 +648,25 @@ function splitCitationString(text: string, nextKey: () => number): ReactNode[] {
 
 function CitationsBar({ citations }: { citations: Citation[] }) {
   return (
-    <div className="mt-2.5 flex flex-wrap gap-2">
+    <div className="mt-3 flex flex-wrap gap-2">
       {citations.map((c) => {
         const body = (
           <>
             <TypeDot type={c.type} />
-            <span className="font-medium text-[11px] text-accent">{c.tag}</span>
-            <span className="truncate max-w-[18rem]">{c.title}</span>
+            <span className="font-mono text-[10.5px] font-semibold text-accent">
+              {c.tag}
+            </span>
+            <span className="truncate max-w-[18rem] text-foreground-muted group-hover:text-foreground">
+              {c.title}
+            </span>
           </>
         );
         const className =
-          "inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-2 py-1 text-xs hover:border-border-strong hover:bg-surface-2 transition";
+          "group inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-2 py-1 text-xs hover:border-border-strong hover:bg-surface-2";
+        const style = {
+          transition:
+            "background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out)",
+        } as const;
         return c.url ? (
           <a
             key={`${c.source_id}-${c.tag}`}
@@ -596,6 +674,7 @@ function CitationsBar({ citations }: { citations: Citation[] }) {
             target="_blank"
             rel="noreferrer"
             className={className}
+            style={style}
             title={c.snippet}
           >
             {body}
@@ -604,6 +683,7 @@ function CitationsBar({ citations }: { citations: Citation[] }) {
           <span
             key={`${c.source_id}-${c.tag}`}
             className={className}
+            style={style}
             title={c.snippet}
           >
             {body}
@@ -614,26 +694,51 @@ function CitationsBar({ citations }: { citations: Citation[] }) {
   );
 }
 
-function ChatEmpty() {
+const SUGGESTED_PROMPTS = [
+  "Summarize the key points across my sources.",
+  "What are the main disagreements between my documents?",
+  "Give me a chronological outline of the main events.",
+];
+
+function ChatEmpty({ onPick }: { onPick: (q: string) => void }) {
   return (
-    <div className="grid place-items-center py-16">
-      <div className="text-center">
-        <div className="mx-auto mb-4 inline-flex h-12 w-12 items-center justify-center rounded-full bg-accent/10 text-accent">
+    <div className="relative overflow-hidden rounded-3xl border border-border bg-surface/40 px-6 md:px-10 py-14 md:py-20">
+      <div aria-hidden className="absolute inset-0 dot-grid opacity-40 [mask-image:radial-gradient(ellipse_at_top,black,transparent_75%)]" />
+      <span aria-hidden className="orb orb--small orb--amber -top-10 -right-10" />
+      <div className="relative fade-up text-center max-w-2xl mx-auto">
+        <div className="mx-auto mb-5 inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-accent/10 text-accent border border-accent/25">
           <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" aria-hidden>
             <path
               stroke="currentColor"
-              strokeWidth="2"
+              strokeWidth="1.8"
               strokeLinecap="round"
               strokeLinejoin="round"
               d="M4 6a2 2 0 012-2h12a2 2 0 012 2v9a2 2 0 01-2 2H9l-5 4V6z"
             />
           </svg>
         </div>
-        <h2 className="text-lg font-medium">Ask your knowledge base</h2>
-        <p className="mt-1 text-sm text-foreground-muted max-w-sm">
-          ChatBrain pulls from every source you&apos;ve added, shows its
-          reasoning, and cites where each answer came from.
+        <h2 className="text-2xl md:text-3xl font-bold tracking-[-0.02em] text-foreground">
+          Ask your second brain.
+        </h2>
+        <p className="mt-2 text-[14.5px] text-foreground-muted max-w-lg mx-auto leading-relaxed">
+          ChatBrain pulls from every source you&rsquo;ve added, shows its
+          reasoning step by step, and cites where each claim came from.
         </p>
+        <div className="mt-6 flex flex-wrap justify-center gap-2">
+          {SUGGESTED_PROMPTS.map((p) => (
+            <button
+              key={p}
+              onClick={() => onPick(p)}
+              className="rounded-full border border-border bg-surface hover:border-border-strong hover:bg-surface-2 text-[13px] text-foreground-muted hover:text-foreground px-3.5 py-1.5"
+              style={{
+                transition:
+                  "background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out)",
+              }}
+            >
+              {p}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );

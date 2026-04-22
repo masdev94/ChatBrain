@@ -5,6 +5,12 @@ import { ApiError, api, type SourceRow } from "@/lib/api";
 
 type Tab = "text" | "pdf" | "url";
 
+const TAB_DEFS: { id: Tab; label: string; hint: string }[] = [
+  { id: "text", label: "Paste text", hint: "Notes, SOPs, transcripts" },
+  { id: "pdf", label: "Upload PDF", hint: "Papers, reports, scans" },
+  { id: "url", label: "Add URL", hint: "Articles, docs, posts" },
+];
+
 export function SourcesView() {
   const [sources, setSources] = useState<SourceRow[] | null>(null);
   const [tab, setTab] = useState<Tab>("text");
@@ -20,8 +26,6 @@ export function SourcesView() {
     }
   }, []);
 
-  // Initial load — canonical inline-async pattern with a cancel flag so a
-  // fast unmount doesn't call setState on a dead component.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -42,7 +46,8 @@ export function SourcesView() {
     };
   }, []);
 
-  // Poll every 2s while anything is still being processed.
+  // Poll while anything is still ingesting — kept short so users see the
+  // status flip to "ready" quickly without flooding the API.
   useEffect(() => {
     const anyPending = sources?.some(
       (s) => s.status === "pending" || s.status === "processing",
@@ -67,21 +72,29 @@ export function SourcesView() {
     }
   };
 
+  const readyCount = sources?.filter((s) => s.status === "ready").length ?? 0;
+  const totalCount = sources?.length ?? 0;
+
   return (
-    <div className="space-y-6">
-      <section className="rounded-xl border border-border bg-surface">
-        <div className="flex border-b border-border overflow-x-auto">
-          <TabButton active={tab === "text"} onClick={() => setTab("text")}>
-            Paste text
-          </TabButton>
-          <TabButton active={tab === "pdf"} onClick={() => setTab("pdf")}>
-            Upload PDF
-          </TabButton>
-          <TabButton active={tab === "url"} onClick={() => setTab("url")}>
-            Add URL
-          </TabButton>
+    <div className="space-y-8">
+      {/* Composer */}
+      <section className="surface-elevated rounded-2xl overflow-hidden">
+        <div
+          role="tablist"
+          aria-label="Source type"
+          className="flex border-b border-border overflow-x-auto"
+        >
+          {TAB_DEFS.map((t) => (
+            <TabButton
+              key={t.id}
+              active={tab === t.id}
+              onClick={() => setTab(t.id)}
+              label={t.label}
+              hint={t.hint}
+            />
+          ))}
         </div>
-        <div className="p-4">
+        <div className="p-5 md:p-6">
           {tab === "text" ? <AddTextForm onAdded={onAdded} /> : null}
           {tab === "pdf" ? <AddPdfForm onAdded={onAdded} /> : null}
           {tab === "url" ? <AddUrlForm onAdded={onAdded} /> : null}
@@ -89,25 +102,46 @@ export function SourcesView() {
       </section>
 
       {error ? (
-        <div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
+        <div
+          role="alert"
+          className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2.5 text-sm text-danger"
+        >
           {error}
         </div>
       ) : null}
 
+      {/* Source list */}
       <section>
-        <div className="flex items-baseline justify-between mb-3">
-          <h2 className="text-sm font-medium text-foreground-muted uppercase tracking-wider">
-            Sources {sources ? `(${sources.length})` : ""}
+        <div className="flex items-baseline justify-between mb-4">
+          <h2 className="text-[11px] font-medium uppercase tracking-[0.14em] text-foreground-subtle">
+            Sources
           </h2>
+          {sources && sources.length > 0 ? (
+            <span className="text-xs text-foreground-muted tabular-nums">
+              <span className="text-foreground font-medium">{readyCount}</span>
+              <span className="text-foreground-subtle"> of </span>
+              <span className="text-foreground font-medium">{totalCount}</span>
+              <span className="text-foreground-subtle"> ready</span>
+            </span>
+          ) : null}
         </div>
+
         {sources === null ? (
-          <div className="text-sm text-foreground-muted">Loading…</div>
+          <div className="space-y-2">
+            <div className="skeleton h-[68px]" />
+            <div className="skeleton h-[68px]" />
+            <div className="skeleton h-[68px]" />
+          </div>
         ) : sources.length === 0 ? (
           <EmptyState />
         ) : (
           <ul className="space-y-2">
             {sources.map((s) => (
-              <SourceItem key={s.id} source={s} onDelete={() => onDelete(s.id)} />
+              <SourceItem
+                key={s.id}
+                source={s}
+                onDelete={() => onDelete(s.id)}
+              />
             ))}
           </ul>
         )}
@@ -119,23 +153,41 @@ export function SourcesView() {
 function TabButton({
   active,
   onClick,
-  children,
+  label,
+  hint,
 }: {
   active: boolean;
   onClick: () => void;
-  children: React.ReactNode;
+  label: string;
+  hint: string;
 }) {
   return (
     <button
       type="button"
+      role="tab"
+      aria-selected={active}
       onClick={onClick}
-      className={`px-4 py-3 text-sm font-medium border-b-2 transition whitespace-nowrap ${
+      className={`relative flex-1 min-w-[140px] px-4 py-3.5 text-left whitespace-nowrap ${
         active
-          ? "border-accent text-foreground"
-          : "border-transparent text-foreground-muted hover:text-foreground"
+          ? "text-foreground"
+          : "text-foreground-muted hover:text-foreground"
       }`}
+      style={{
+        transition:
+          "color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out)",
+      }}
     >
-      {children}
+      <span className="block text-sm font-medium">{label}</span>
+      <span className="block text-[11.5px] text-foreground-subtle mt-0.5">
+        {hint}
+      </span>
+      <span
+        aria-hidden
+        className={`absolute left-0 right-0 -bottom-px h-[2px] ${
+          active ? "bg-accent" : "bg-transparent"
+        }`}
+        style={{ transition: "background-color var(--dur-fast) var(--ease-out)" }}
+      />
     </button>
   );
 }
@@ -169,23 +221,35 @@ function AddTextForm({ onAdded }: { onAdded: (row: SourceRow) => void }) {
   };
 
   return (
-    <form onSubmit={onSubmit} className="space-y-3">
-      <input
+    <form onSubmit={onSubmit} className="space-y-3.5">
+      <LabeledInput
+        label="Title"
         value={title}
-        onChange={(e) => setTitle(e.target.value)}
-        placeholder="Title (e.g. Return policy SOP)"
+        onChange={setTitle}
+        placeholder="e.g. Return policy SOP"
         maxLength={200}
-        className="w-full rounded-md border border-border bg-surface-2 px-3 py-2 text-sm focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/30"
       />
-      <textarea
-        value={content}
-        onChange={(e) => setContent(e.target.value)}
-        placeholder="Paste any text: an SOP, notes, a doc…"
-        rows={8}
-        className="w-full rounded-md border border-border bg-surface-2 px-3 py-2 text-sm font-mono resize-y focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/30"
-      />
-      {error ? <p className="text-sm text-danger">{error}</p> : null}
-      <div className="flex justify-end">
+      <label className="block">
+        <span className="block text-[13px] font-medium text-foreground mb-1.5">
+          Content
+        </span>
+        <textarea
+          value={content}
+          onChange={(e) => setContent(e.target.value)}
+          placeholder="Paste any text: an SOP, notes, a transcript…"
+          rows={10}
+          className="w-full rounded-md border border-border bg-surface-2 px-3 py-2.5 text-sm font-mono leading-relaxed resize-y focus:outline-none focus:border-accent/60"
+          style={{
+            transition:
+              "border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out)",
+          }}
+        />
+      </label>
+      {error ? <InlineError>{error}</InlineError> : null}
+      <div className="flex items-center justify-between">
+        <span className="text-[11.5px] text-foreground-subtle">
+          We chunk long text automatically before embedding.
+        </span>
         <SubmitBtn disabled={submitting || !title.trim() || !content.trim()}>
           {submitting ? "Adding…" : "Add text source"}
         </SubmitBtn>
@@ -218,30 +282,63 @@ function AddPdfForm({ onAdded }: { onAdded: (row: SourceRow) => void }) {
   };
 
   return (
-    <form onSubmit={onSubmit} className="space-y-3">
+    <form onSubmit={onSubmit} className="space-y-3.5">
       <label className="block">
-        <span className="block text-sm text-foreground-muted mb-1">
+        <span className="block text-[13px] font-medium text-foreground mb-1.5">
           PDF file
         </span>
-        <input
-          type="file"
-          accept="application/pdf"
-          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-          className="block w-full text-sm file:mr-3 file:rounded-md file:border-0 file:bg-accent file:text-[#0b0d12] file:px-3 file:py-2 file:font-medium file:cursor-pointer hover:file:bg-accent-strong"
-        />
+        <div className="relative rounded-md border border-dashed border-border-strong bg-surface-2/60 hover:border-accent/60 px-4 py-5 flex items-center gap-3"
+             style={{ transition: "border-color var(--dur-fast) var(--ease-out)" }}>
+          <div className="h-9 w-9 shrink-0 rounded-md bg-surface border border-border grid place-items-center text-accent">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+              <path
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M14 3H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2V9l-6-6z"
+              />
+              <path
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M14 3v6h6"
+              />
+            </svg>
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="text-sm text-foreground truncate">
+              {file ? file.name : "Choose a PDF"}
+            </div>
+            <div className="text-[11.5px] text-foreground-subtle mt-0.5">
+              {file
+                ? `${(file.size / (1024 * 1024)).toFixed(2)} MB`
+                : "Up to 50 MB. Scanned pages are transcribed via OCR."}
+            </div>
+          </div>
+          <input
+            type="file"
+            accept="application/pdf"
+            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            className="absolute inset-0 opacity-0 cursor-pointer"
+            aria-label="Choose PDF file"
+          />
+        </div>
       </label>
-      <input
+      <LabeledInput
+        label="Title"
         value={title}
-        onChange={(e) => setTitle(e.target.value)}
-        placeholder="Title (optional, defaults to file name)"
+        onChange={setTitle}
+        placeholder="Optional — defaults to the file name"
         maxLength={200}
-        className="w-full rounded-md border border-border bg-surface-2 px-3 py-2 text-sm focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/30"
+        optional
       />
-      <p className="text-xs text-foreground-muted">
-        Up to 50 MB. Scanned PDFs are transcribed via OCR.
-      </p>
-      {error ? <p className="text-sm text-danger">{error}</p> : null}
-      <div className="flex justify-end">
+      {error ? <InlineError>{error}</InlineError> : null}
+      <div className="flex items-center justify-between">
+        <span className="text-[11.5px] text-foreground-subtle">
+          Ingestion runs in the background — you can keep working.
+        </span>
         <SubmitBtn disabled={submitting || !file}>
           {submitting ? "Uploading…" : "Upload"}
         </SubmitBtn>
@@ -262,7 +359,10 @@ function AddUrlForm({ onAdded }: { onAdded: (row: SourceRow) => void }) {
     setSubmitting(true);
     setError(null);
     try {
-      const row = await api.sources.createUrl(url.trim(), title.trim() || undefined);
+      const row = await api.sources.createUrl(
+        url.trim(),
+        title.trim() || undefined,
+      );
       onAdded(row);
       setUrl("");
       setTitle("");
@@ -274,29 +374,93 @@ function AddUrlForm({ onAdded }: { onAdded: (row: SourceRow) => void }) {
   };
 
   return (
-    <form onSubmit={onSubmit} className="space-y-3">
-      <input
-        type="url"
-        value={url}
-        onChange={(e) => setUrl(e.target.value)}
-        placeholder="https://example.com/your-article"
-        required
-        className="w-full rounded-md border border-border bg-surface-2 px-3 py-2 text-sm focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/30"
-      />
-      <input
+    <form onSubmit={onSubmit} className="space-y-3.5">
+      <label className="block">
+        <span className="block text-[13px] font-medium text-foreground mb-1.5">
+          URL
+        </span>
+        <input
+          type="url"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          placeholder="https://example.com/your-article"
+          required
+          className="w-full h-11 rounded-md border border-border bg-surface-2 px-3 text-sm text-foreground placeholder:text-foreground-subtle focus:outline-none focus:border-accent/60"
+          style={{
+            transition:
+              "border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out)",
+          }}
+        />
+      </label>
+      <LabeledInput
+        label="Title"
         value={title}
-        onChange={(e) => setTitle(e.target.value)}
-        placeholder="Title (optional, auto-detected from page)"
+        onChange={setTitle}
+        placeholder="Optional — we'll use the page title if empty"
         maxLength={200}
-        className="w-full rounded-md border border-border bg-surface-2 px-3 py-2 text-sm focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/30"
+        optional
       />
-      {error ? <p className="text-sm text-danger">{error}</p> : null}
-      <div className="flex justify-end">
+      {error ? <InlineError>{error}</InlineError> : null}
+      <div className="flex items-center justify-between">
+        <span className="text-[11.5px] text-foreground-subtle">
+          We scrape the main article body — no login-gated content.
+        </span>
         <SubmitBtn disabled={submitting || !url.trim()}>
           {submitting ? "Scraping…" : "Add URL"}
         </SubmitBtn>
       </div>
     </form>
+  );
+}
+
+function LabeledInput({
+  label,
+  value,
+  onChange,
+  placeholder,
+  maxLength,
+  optional,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  maxLength?: number;
+  optional?: boolean;
+}) {
+  return (
+    <label className="block">
+      <span className="flex items-center gap-2 mb-1.5">
+        <span className="text-[13px] font-medium text-foreground">{label}</span>
+        {optional ? (
+          <span className="text-[10.5px] uppercase tracking-wider text-foreground-subtle">
+            Optional
+          </span>
+        ) : null}
+      </span>
+      <input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        maxLength={maxLength}
+        className="w-full h-11 rounded-md border border-border bg-surface-2 px-3 text-sm text-foreground placeholder:text-foreground-subtle focus:outline-none focus:border-accent/60"
+        style={{
+          transition:
+            "border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out)",
+        }}
+      />
+    </label>
+  );
+}
+
+function InlineError({ children }: { children: React.ReactNode }) {
+  return (
+    <p
+      role="alert"
+      className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger"
+    >
+      {children}
+    </p>
   );
 }
 
@@ -311,7 +475,11 @@ function SubmitBtn({
     <button
       type="submit"
       disabled={disabled}
-      className="rounded-md bg-accent hover:bg-accent-strong text-[#0b0d12] font-medium px-4 py-2 text-sm transition disabled:opacity-60 disabled:cursor-not-allowed"
+      className="rounded-md bg-accent hover:bg-accent-strong text-[#0b0d12] font-medium px-4 h-10 text-sm disabled:opacity-60 disabled:cursor-not-allowed"
+      style={{
+        transition:
+          "background-color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out)",
+      }}
     >
       {children}
     </button>
@@ -334,23 +502,32 @@ function SourceItem({
   );
 
   return (
-    <li className="rounded-lg border border-border bg-surface px-4 py-3 flex items-start gap-3">
+    <li
+      className="group rounded-lg border border-border bg-surface hover:border-border-strong px-4 py-3.5 flex items-start gap-4"
+      style={{
+        transition:
+          "border-color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out)",
+      }}
+    >
       <TypeBadge type={source.type} />
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <h3 className="truncate font-medium">{source.title}</h3>
+        <div className="flex items-center gap-2 flex-wrap">
+          <h3 className="font-medium text-[14.5px] text-foreground truncate max-w-full">
+            {source.title}
+          </h3>
           <StatusPill status={source.status} />
         </div>
-        <div className="mt-1 text-xs text-foreground-muted flex items-center gap-2 flex-wrap">
+        <div className="mt-1 text-[12px] text-foreground-subtle flex items-center gap-2 flex-wrap">
           <span>{created}</span>
           {source.url ? (
             <>
-              <span>·</span>
+              <Dot />
               <a
                 href={source.url}
                 target="_blank"
                 rel="noreferrer"
                 className="truncate hover:text-foreground underline-offset-2 hover:underline max-w-[22rem]"
+                style={{ transition: "color var(--dur-fast) var(--ease-out)" }}
               >
                 {source.url}
               </a>
@@ -358,8 +535,8 @@ function SourceItem({
           ) : null}
           {source.status === "ready" ? (
             <>
-              <span>·</span>
-              <span>{source.chunk_count} chunks</span>
+              <Dot />
+              <span className="tabular-nums">{source.chunk_count} chunks</span>
             </>
           ) : null}
         </div>
@@ -369,13 +546,17 @@ function SourceItem({
       </div>
       <button
         onClick={onDelete}
-        aria-label="Delete source"
-        className="shrink-0 rounded-md p-2 text-foreground-muted hover:text-danger hover:bg-danger/10 transition"
+        aria-label={`Delete ${source.title}`}
+        className="shrink-0 rounded-md p-2 text-foreground-subtle hover:text-danger hover:bg-danger/10"
+        style={{
+          transition:
+            "background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out)",
+        }}
       >
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
           <path
             stroke="currentColor"
-            strokeWidth="2"
+            strokeWidth="1.8"
             strokeLinecap="round"
             strokeLinejoin="round"
             d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 002 2h6a2 2 0 002-2l1-12M9 7V5a2 2 0 012-2h2a2 2 0 012 2v2"
@@ -386,17 +567,22 @@ function SourceItem({
   );
 }
 
+function Dot() {
+  return <span aria-hidden className="text-foreground-subtle">·</span>;
+}
+
 function TypeBadge({ type }: { type: SourceRow["type"] }) {
   const label = type.toUpperCase();
-  const color =
+  // Subtle, desaturated token per type — same chromatic family, different hue.
+  const cls =
     type === "pdf"
-      ? "bg-rose-500/15 text-rose-300 border-rose-500/30"
+      ? "bg-rose-500/10 text-rose-300 border-rose-500/25"
       : type === "url"
-        ? "bg-sky-500/15 text-sky-300 border-sky-500/30"
-        : "bg-emerald-500/15 text-emerald-300 border-emerald-500/30";
+        ? "bg-sky-500/10 text-sky-300 border-sky-500/25"
+        : "bg-emerald-500/10 text-emerald-300 border-emerald-500/25";
   return (
     <span
-      className={`inline-flex items-center justify-center text-[10px] font-semibold border rounded-md w-11 py-0.5 ${color}`}
+      className={`mt-0.5 inline-flex items-center justify-center text-[10px] font-mono font-semibold border rounded-md w-11 py-1 ${cls}`}
     >
       {label}
     </span>
@@ -406,21 +592,21 @@ function TypeBadge({ type }: { type: SourceRow["type"] }) {
 function StatusPill({ status }: { status: SourceRow["status"] }) {
   if (status === "ready") {
     return (
-      <span className="inline-flex items-center gap-1 text-[11px] text-success">
+      <span className="inline-flex items-center gap-1.5 text-[11px] text-success">
         <span className="h-1.5 w-1.5 rounded-full bg-success" /> ready
       </span>
     );
   }
   if (status === "failed") {
     return (
-      <span className="inline-flex items-center gap-1 text-[11px] text-danger">
+      <span className="inline-flex items-center gap-1.5 text-[11px] text-danger">
         <span className="h-1.5 w-1.5 rounded-full bg-danger" /> failed
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1 text-[11px] text-warning">
-      <span className="h-1.5 w-1.5 rounded-full bg-warning animate-pulse" />{" "}
+    <span className="inline-flex items-center gap-1.5 text-[11px] text-warning">
+      <span className="h-1.5 w-1.5 rounded-full bg-warning animate-pulse" />
       {status === "pending" ? "queued" : "processing"}
     </span>
   );
@@ -428,22 +614,28 @@ function StatusPill({ status }: { status: SourceRow["status"] }) {
 
 function EmptyState() {
   return (
-    <div className="rounded-xl border border-dashed border-border-strong bg-surface/40 p-8 text-center">
-      <div className="mx-auto mb-3 inline-flex h-10 w-10 items-center justify-center rounded-full bg-accent/10 text-accent">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden>
-          <path
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            d="M12 5v14M5 12h14"
-          />
-        </svg>
+    <div className="relative rounded-2xl border border-dashed border-border-strong bg-surface/40 p-10 text-center overflow-hidden">
+      <div aria-hidden className="absolute inset-0 dot-grid opacity-40 [mask-image:radial-gradient(ellipse_at_center,black,transparent_75%)]" />
+      <div className="relative">
+        <div className="mx-auto mb-4 inline-flex h-11 w-11 items-center justify-center rounded-xl bg-accent/10 text-accent border border-accent/25">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden>
+            <path
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M12 5v14M5 12h14"
+            />
+          </svg>
+        </div>
+        <h3 className="text-base font-semibold text-foreground">
+          Your brain is empty
+        </h3>
+        <p className="mt-1 text-sm text-foreground-muted max-w-md mx-auto">
+          Add your first source above — a PDF, a note, or a link. Once it&rsquo;s
+          ready, head over to chat and ask it anything.
+        </p>
       </div>
-      <h3 className="font-medium">No sources yet</h3>
-      <p className="mt-1 text-sm text-foreground-muted">
-        Add some knowledge above, then head to chat.
-      </p>
     </div>
   );
 }
