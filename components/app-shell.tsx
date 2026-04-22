@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { BrandMark } from "@/components/brand";
 import { signOutAction } from "@/app/auth/actions";
 import { api, type Conversation } from "@/lib/api";
@@ -18,12 +18,17 @@ export function AppShell({
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-  // Which conversation (if any) is in "click again to confirm delete" mode.
+  // Which conversation (if any) has the delete confirmation modal open.
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
-  // Tracks the in-flight delete so we can disable both buttons while it runs.
+  // Tracks the in-flight delete so the modal's Delete button can show a busy
+  // state and both modal buttons disable while the request runs.
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const pathname = usePathname();
   const router = useRouter();
+
+  const confirmingConversation = confirmingId
+    ? conversations.find((c) => c.id === confirmingId) ?? null
+    : null;
 
   // Re-fetch the sidebar list whenever the route changes (so a newly created
   // conversation appears, a renamed one updates, etc.).
@@ -73,10 +78,10 @@ export function AppShell({
     if (deletingId) return;
     const snapshot = conversations;
     setDeletingId(id);
-    setConfirmingId(null);
     setConversations((prev) => prev.filter((c) => c.id !== id));
     try {
       await api.conversations.remove(id);
+      setConfirmingId(null);
       if (pathname === `/app/chat/${id}`) {
         router.push("/app");
       }
@@ -237,9 +242,7 @@ export function AppShell({
                     active={active}
                     confirming={confirming}
                     deleting={deleting}
-                    onArmDelete={() => setConfirmingId(c.id)}
-                    onConfirmDelete={() => void deleteConversation(c.id)}
-                    onCancelDelete={() => setConfirmingId(null)}
+                    onRequestDelete={() => setConfirmingId(c.id)}
                   />
                 );
               })}
@@ -327,6 +330,15 @@ export function AppShell({
       <main className="flex-1 flex flex-col min-w-0 pt-14 md:pt-0">
         {children}
       </main>
+
+      {confirmingConversation ? (
+        <ConfirmDeleteDialog
+          conversation={confirmingConversation}
+          busy={deletingId === confirmingConversation.id}
+          onConfirm={() => void deleteConversation(confirmingConversation.id)}
+          onCancel={() => setConfirmingId(null)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -380,30 +392,25 @@ function ConversationRow({
   active,
   confirming,
   deleting,
-  onArmDelete,
-  onConfirmDelete,
-  onCancelDelete,
+  onRequestDelete,
 }: {
   conversation: Conversation;
   active: boolean;
   confirming: boolean;
   deleting: boolean;
-  onArmDelete: () => void;
-  onConfirmDelete: () => void;
-  onCancelDelete: () => void;
+  onRequestDelete: () => void;
 }) {
   const ts = useMemo(
     () => formatRelativeShort(conversation.updated_at || conversation.created_at),
     [conversation.updated_at, conversation.created_at],
   );
   const title = conversation.title || "New conversation";
+  const actionsVisible = confirming || deleting;
 
   return (
     <li
       className={`group relative rounded-lg ${
-        active
-          ? "bg-surface-2"
-          : "hover:bg-surface-2/60"
+        active ? "bg-surface-2" : "hover:bg-surface-2/60"
       } ${confirming ? "ring-1 ring-danger/40" : ""}`}
       style={{
         transition:
@@ -444,21 +451,17 @@ function ConversationRow({
           </svg>
         </span>
         <span className="flex-1 min-w-0 truncate">{title}</span>
-        {/* Timestamp — hidden when the row's hover actions are shown so the
-            two never visually fight for the same space. */}
-        {!confirming ? (
-          <span className="shrink-0 text-[10.5px] text-foreground-subtle tabular-nums group-hover:opacity-0 group-focus-within:opacity-0 transition-opacity">
-            {ts}
-          </span>
-        ) : null}
+        {/* Timestamp — hides when the trash button is shown so they don't fight
+            for the same space. */}
+        <span className="shrink-0 text-[10.5px] text-foreground-subtle tabular-nums group-hover:opacity-0 group-focus-within:opacity-0 transition-opacity">
+          {ts}
+        </span>
       </Link>
 
-      {/* Delete affordance — hidden by default, revealed on hover/focus.
-          Once armed, it expands into a confirm/cancel pair so a single
-          misclick can't destroy history. */}
+      {/* Delete affordance — hidden until hover/focus; opens the confirm modal. */}
       <div
         className={`absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 ${
-          confirming
+          actionsVisible
             ? "opacity-100"
             : "opacity-0 group-hover:opacity-100 focus-within:opacity-100"
         }`}
@@ -466,96 +469,189 @@ function ConversationRow({
           transition: "opacity var(--dur-fast) var(--ease-out)",
         }}
       >
-        {confirming ? (
-          <>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                onConfirmDelete();
-              }}
-              disabled={deleting}
-              aria-label="Confirm delete"
-              title="Confirm delete"
-              className="h-7 w-7 grid place-items-center rounded-md text-danger bg-danger/10 hover:bg-danger/20 disabled:opacity-50"
-              style={{
-                transition:
-                  "background-color var(--dur-fast) var(--ease-out)",
-              }}
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden>
-                <path
-                  stroke="currentColor"
-                  strokeWidth="2.4"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M5 12l5 5L20 7"
-                />
-              </svg>
-            </button>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                onCancelDelete();
-              }}
-              disabled={deleting}
-              aria-label="Cancel"
-              title="Cancel"
-              className="h-7 w-7 grid place-items-center rounded-md text-foreground-muted hover:text-foreground hover:bg-surface"
-              style={{
-                transition:
-                  "background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out)",
-              }}
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden>
-                <path
-                  stroke="currentColor"
-                  strokeWidth="2.4"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M6 6l12 12M18 6L6 18"
-                />
-              </svg>
-            </button>
-          </>
-        ) : (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              onArmDelete();
-            }}
-            aria-label={`Delete "${title}"`}
-            title="Delete"
-            className="h-7 w-7 grid place-items-center rounded-md text-foreground-subtle hover:text-danger hover:bg-danger/10"
-            style={{
-              transition:
-                "background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out)",
-            }}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onRequestDelete();
+          }}
+          disabled={deleting}
+          aria-label={`Delete "${title}"`}
+          title="Delete"
+          className="h-7 w-7 grid place-items-center rounded-md text-foreground-subtle hover:text-danger hover:bg-danger/10 disabled:opacity-50"
+          style={{
+            transition:
+              "background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out)",
+          }}
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden>
+            <path
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M4 7h16M9 7V5a2 2 0 012-2h2a2 2 0 012 2v2M6 7l1 12a2 2 0 002 2h6a2 2 0 002-2l1-12"
+            />
+            <path
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              d="M10 11v6M14 11v6"
+            />
+          </svg>
+        </button>
+      </div>
+    </li>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Confirm delete modal
+// ──────────────────────────────────────────────────────────────────────────
+function ConfirmDeleteDialog({
+  conversation,
+  busy,
+  onConfirm,
+  onCancel,
+}: {
+  conversation: Conversation;
+  busy: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const title = conversation.title || "New conversation";
+  const cancelRef = useRef<HTMLButtonElement>(null);
+
+  // Focus the safe default (Cancel) when opened; Escape closes the dialog.
+  useEffect(() => {
+    cancelRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !busy) onCancel();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [busy, onCancel]);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="confirm-delete-title"
+      aria-describedby="confirm-delete-desc"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+    >
+      {/* Backdrop */}
+      <button
+        type="button"
+        aria-label="Cancel"
+        onClick={() => {
+          if (!busy) onCancel();
+        }}
+        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+        style={{ cursor: busy ? "default" : "pointer" }}
+      />
+
+      {/* Panel */}
+      <div
+        className="fade-up relative w-full max-w-md surface-elevated rounded-2xl p-6"
+        style={{
+          animation: "fadeUp var(--dur-med) var(--ease-spring) both",
+        }}
+      >
+        <div className="flex items-start gap-3.5">
+          <span
+            aria-hidden
+            className="shrink-0 grid place-items-center h-10 w-10 rounded-full bg-danger/12 text-danger"
           >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
               <path
                 stroke="currentColor"
                 strokeWidth="1.8"
                 strokeLinecap="round"
                 strokeLinejoin="round"
-                d="M4 7h16M9 7V5a2 2 0 012-2h2a2 2 0 012 2v2M6 7l1 12a2 2 0 002 2h6a2 2 0 002-2l1-12"
-              />
-              <path
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                d="M10 11v6M14 11v6"
+                d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
               />
             </svg>
+          </span>
+          <div className="min-w-0 flex-1">
+            <h2
+              id="confirm-delete-title"
+              className="text-[15.5px] font-semibold tracking-tight text-foreground"
+            >
+              Delete this conversation?
+            </h2>
+            <p
+              id="confirm-delete-desc"
+              className="mt-1.5 text-[13px] leading-relaxed text-foreground-muted"
+            >
+              <span className="text-foreground">
+                &ldquo;<span className="font-medium">{title}</span>&rdquo;
+              </span>{" "}
+              and all of its messages will be permanently removed. This
+              can&rsquo;t be undone.
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-6 flex items-center justify-end gap-2">
+          <button
+            ref={cancelRef}
+            type="button"
+            onClick={onCancel}
+            disabled={busy}
+            className="h-9 px-3.5 rounded-md text-[13px] font-medium text-foreground-muted hover:text-foreground hover:bg-surface-2 disabled:opacity-50"
+            style={{
+              transition:
+                "background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out)",
+            }}
+          >
+            Cancel
           </button>
-        )}
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={busy}
+            className="h-9 px-3.5 rounded-md text-[13px] font-medium text-white bg-danger hover:bg-danger/90 disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2"
+            style={{
+              transition:
+                "background-color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out)",
+            }}
+          >
+            {busy ? (
+              <>
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  aria-hidden
+                  className="animate-spin"
+                >
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r="9"
+                    stroke="currentColor"
+                    strokeOpacity="0.35"
+                    strokeWidth="2.5"
+                  />
+                  <path
+                    d="M21 12a9 9 0 00-9-9"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                  />
+                </svg>
+                Deleting…
+              </>
+            ) : (
+              "Delete"
+            )}
+          </button>
+        </div>
       </div>
-    </li>
+    </div>
   );
 }
 
