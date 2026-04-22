@@ -1,12 +1,18 @@
 "use client";
 
 import {
+  Children,
+  Fragment,
+  isValidElement,
+  cloneElement,
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   ApiError,
   api,
@@ -350,7 +356,7 @@ function AssistantBubble({
           </div>
         ) : null}
         {content ? (
-          <div className="mt-2 rounded-2xl border border-border bg-surface px-4 py-3 text-[15px] leading-relaxed">
+          <div className="mt-2 rounded-2xl border border-border bg-surface px-4 py-3">
             <AnswerText content={content} streaming={streaming} />
           </div>
         ) : streaming ? (
@@ -452,8 +458,11 @@ function TypeDot({ type }: { type: "pdf" | "text" | "url" }) {
 }
 
 /**
- * Renders the answer with inline [Sn] tags turned into small citation pills.
- * Keeps the transformation pure-text: no markdown dependency.
+ * Renders the assistant answer as markdown (headings, bold, bullet lists,
+ * code, tables, …) and turns inline [Sn] tags into small citation pills. We
+ * walk the markdown output tree and substitute [Sn] at text leaves so the
+ * pills render inside paragraphs, list items, headings — wherever the model
+ * places them.
  */
 function AnswerText({
   content,
@@ -462,46 +471,108 @@ function AnswerText({
   content: string;
   streaming: boolean;
 }) {
-  const parts = useMemo(() => splitWithCitations(content), [content]);
   return (
-    <div className="whitespace-pre-wrap">
-      {parts.map((p, i) =>
-        p.type === "text" ? (
-          <span key={i}>{p.text}</span>
-        ) : (
-          <span
-            key={i}
-            className="mx-0.5 inline-flex items-center rounded-md border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-[11px] font-medium text-accent align-[1px]"
-            title={`Source ${p.n}`}
-          >
-            S{p.n}
-          </span>
-        ),
-      )}
+    <div className="answer-prose">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          p: ({ children }) => <p>{renderWithCitations(children)}</p>,
+          li: ({ children }) => <li>{renderWithCitations(children)}</li>,
+          h1: ({ children }) => <h1>{renderWithCitations(children)}</h1>,
+          h2: ({ children }) => <h2>{renderWithCitations(children)}</h2>,
+          h3: ({ children }) => <h3>{renderWithCitations(children)}</h3>,
+          h4: ({ children }) => <h4>{renderWithCitations(children)}</h4>,
+          strong: ({ children }) => (
+            <strong>{renderWithCitations(children)}</strong>
+          ),
+          em: ({ children }) => <em>{renderWithCitations(children)}</em>,
+          td: ({ children }) => <td>{renderWithCitations(children)}</td>,
+          th: ({ children }) => <th>{renderWithCitations(children)}</th>,
+          blockquote: ({ children }) => (
+            <blockquote>{renderWithCitations(children)}</blockquote>
+          ),
+          a: ({ href, children }) => (
+            <a href={href} target="_blank" rel="noreferrer">
+              {renderWithCitations(children)}
+            </a>
+          ),
+          pre: ({ children }) => <pre>{children}</pre>,
+          code: ({ children, ...rest }) => <code {...rest}>{children}</code>,
+        }}
+      >
+        {content}
+      </ReactMarkdown>
       {streaming ? <span className="stream-caret" /> : null}
     </div>
   );
 }
 
-function splitWithCitations(content: string): (
-  | { type: "text"; text: string }
-  | { type: "cite"; n: number }
-)[] {
-  const out: (
-    | { type: "text"; text: string }
-    | { type: "cite"; n: number }
-  )[] = [];
-  const re = /\[S(\d+)\]/g;
+const CITATION_RE = /\[S(\d+)\]/g;
+
+function CitationPill({ n }: { n: number }) {
+  return (
+    <span
+      className="mx-0.5 inline-flex items-center rounded-md border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-[11px] font-medium text-accent align-[1px]"
+      title={`Source ${n}`}
+    >
+      S{n}
+    </span>
+  );
+}
+
+/**
+ * Recursively walks React children produced by react-markdown and replaces
+ * [Sn] tokens inside string leaves with CitationPill components. Non-string
+ * nodes (e.g. nested <strong>, <code>) are descended into so citations work
+ * even when wrapped in inline formatting.
+ */
+function renderWithCitations(children: ReactNode): ReactNode {
+  const out: ReactNode[] = [];
+  let key = 0;
+  Children.forEach(children, (child) => {
+    if (typeof child === "string") {
+      out.push(...splitCitationString(child, () => key++));
+      return;
+    }
+    if (typeof child === "number" || typeof child === "boolean") {
+      out.push(child);
+      return;
+    }
+    if (child == null) return;
+    if (isValidElement(child)) {
+      const el = child as React.ReactElement<{ children?: ReactNode }>;
+      const nested = el.props?.children;
+      if (nested !== undefined) {
+        out.push(
+          cloneElement(el, { key: key++ }, renderWithCitations(nested)),
+        );
+      } else {
+        out.push(cloneElement(el, { key: key++ }));
+      }
+      return;
+    }
+    out.push(child);
+  });
+  return out;
+}
+
+function splitCitationString(text: string, nextKey: () => number): ReactNode[] {
+  const out: ReactNode[] = [];
   let last = 0;
-  let m;
-  while ((m = re.exec(content)) !== null) {
-    if (m.index > last)
-      out.push({ type: "text", text: content.slice(last, m.index) });
-    out.push({ type: "cite", n: parseInt(m[1], 10) });
+  let m: RegExpExecArray | null;
+  CITATION_RE.lastIndex = 0;
+  while ((m = CITATION_RE.exec(text)) !== null) {
+    if (m.index > last) {
+      out.push(
+        <Fragment key={nextKey()}>{text.slice(last, m.index)}</Fragment>,
+      );
+    }
+    out.push(<CitationPill key={nextKey()} n={parseInt(m[1], 10)} />);
     last = m.index + m[0].length;
   }
-  if (last < content.length)
-    out.push({ type: "text", text: content.slice(last) });
+  if (last < text.length) {
+    out.push(<Fragment key={nextKey()}>{text.slice(last)}</Fragment>);
+  }
   return out;
 }
 

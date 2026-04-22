@@ -21,7 +21,10 @@ class Settings(BaseSettings):
     supabase_url: str
     supabase_anon_key: str
     supabase_service_role_key: str
-    supabase_jwt_secret: str
+    # HS256 JWT secret (legacy projects). Projects using asymmetric JWT
+    # signing (ES256 / RS256) don't expose a shared secret — leave empty
+    # and the backend will verify tokens via the project's JWKS endpoint.
+    supabase_jwt_secret: str = ""
 
     # OpenAI
     openai_api_key: str

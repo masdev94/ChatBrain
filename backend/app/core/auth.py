@@ -1,20 +1,4 @@
 """Authentication dependency.
-
-Supabase issues a JWT for each logged-in user. We verify it locally so the
-hot path never makes an extra network call per request.
-
-Supabase has two JWT signing modes today, and we support both transparently:
-
-* **HS256** (legacy projects) — verified with the shared JWT secret from
-  Project Settings → API → JWT Keys → Legacy JWT Secret.
-
-* **ES256 / RS256** (modern projects with asymmetric "JWT Signing Keys") —
-  verified against the project's JWKS endpoint. The private signing key lives
-  only inside Supabase; our backend fetches and caches the matching public
-  key via PyJWKClient and uses it to verify the ECDSA / RSA signature.
-
-The verification strategy is picked from the token's own `alg` header, so
-the backend works on either type of project without code changes.
 """
 
 from __future__ import annotations
