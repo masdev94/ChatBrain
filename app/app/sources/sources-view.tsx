@@ -211,7 +211,7 @@ export function SourcesView() {
         <div
           role="tablist"
           aria-label="Source type"
-          className="flex border-b border-border overflow-x-auto"
+          className="flex border-b border-border overflow-x-auto overflow-y-hidden"
         >
           {TAB_DEFS.map((t) => (
             <TabButton
