@@ -21,6 +21,7 @@ from ..core.logging import logger
 from .chunker import chunk_text
 from .embedder import embed_texts
 from .pdf import PdfExtractionError, extract_pdf
+from .summarizer import summarize_text
 from .url import UrlScrapeError, scrape_url
 
 Loader = Callable[[dict[str, Any], dict[str, str]], Awaitable[str]]
@@ -170,6 +171,14 @@ async def _run(
         # Wipe any prior chunks (e.g. if we ever re-run ingestion) then insert fresh.
         db.table("chunks").delete().eq("source_id", source_id).execute()
         db.table("chunks").insert(rows).execute()
+
+        # Generate a short summary so the UI can preview each source. This is
+        # best-effort — `summarize_text` returns "" on any failure rather than
+        # raising, so a flaky model call won't block the source from going ready.
+        log.info("ingest.summarizing")
+        summary = await summarize_text(text)
+        if summary:
+            metadata["summary"] = summary
 
         update: dict[str, Any] = {
             "status": "ready",

@@ -130,52 +130,27 @@ Supabase
 
 ## Which AI service and why
 
-**Picked: OpenAI — `gpt-4o-mini` for chat + vision-OCR, `text-embedding-3-small` (1536-dim) for embeddings.**
+**Picked: OpenAI (gpt-4o-mini + text-embedding-3-small).**
 
-### The decision criteria
+I evaluated it against Anthropic Claude Haiku:
 
-A RAG "second brain" needs four distinct capabilities from the provider:
+| Dimension | OpenAI (`gpt-4o-mini` + `text-embedding-3-small`) | Anthropic Claude Haiku |
+|---|---|---|
+| **Cost** | ~$0.15 / 1M input, $0.60 / 1M output · embeddings $0.02 / 1M | ~$0.80 / 1M input, $4 / 1M output · no first-party embeddings |
+| **Embeddings** | Native, 1536-dim, batched, very cheap | None — must pair with Voyage/Cohere/OpenAI |
+| **Streaming** | Standard Chat Completions SSE; low-overhead token deltas | Excellent native streaming + structured thinking blocks |
+| **Vision (for OCR)** | Same model does vision; single dependency | Would need a separate vision path or keep OpenAI for OCR |
+| **Follow-up rewrite** | Instruction-following is good at `temperature=0` | Claude is slightly better at this but not required |
+| **Grounding discipline** | Respects a strict "only from the context" prompt well enough with temperature 0.2 | Equally strong |
+| **Vendor sprawl** | 1 vendor, 1 key, 1 SDK | 2 vendors (chat + embeddings) |
 
-1. **Embeddings** — the heaviest call in terms of *volume* (every chunk of every source).
-2. **Chat completion with streaming** — token-by-token SSE so the UI can render thinking + answer live.
-3. **Strong instruction-following at low temperature** — so the grounding contract ("only answer from the supplied excerpts, cite every claim") is actually respected.
-4. **Vision (OCR fallback)** — scanned PDFs need an image→text path when PyMuPDF extracts nothing useful.
+**Why OpenAI won this build.** Three things mattered most for a 5-day scope:
 
-Secondary factors that shaped the decision: **cost at ingestion scale**, **vendor sprawl** (one key vs. three), and **ecosystem / SDK quality** for a 5-day build.
+1. **Single vendor, one SDK**: chat, streaming, embeddings, and OCR-via-vision all live behind `openai` in Python. Anthropic would mean bolting on Voyage (or OpenAI anyway) for embeddings, which doubles the surface area for keys, retries, and cost modelling.
+2. **Cost**: embeddings at $0.02/1M tokens makes full-document ingestion nearly free, which matters once a user has a real knowledge base. Haiku's chat cost is ~5× OpenAI's per input token.
+3. **Reasoning visibility is our own stream, not the model's.** Claude's biggest differentiator today is extended/extended-thinking blocks, but the brief asks for *app-level* reasoning ("searching sources, finding sections, forming answer") — which we design as a typed SSE stream (rewrite → retrieve → read → answer). The provider's internal thinking isn't visible to the user anyway.
 
-### The three options I researched
-
-| Dimension | **OpenAI** (`gpt-4o-mini` + `text-embedding-3-small`) | **Anthropic Claude** (Haiku 3.5) | **Google Gemini** (`gemini-2.5-flash` + `text-embedding-004`) |
-|---|---|---|---|
-| **Chat $/1M tok (in/out)** | **$0.15 / $0.60** | $0.80 / $4.00 | $0.075 / $0.30 |
-| **Embeddings** | **Native, $0.02/1M, 1536-dim** | None — must pair with Voyage / Cohere / OpenAI | Native, free tier available, 768-dim |
-| **Streaming** | Chat Completions SSE, low overhead, typed deltas | Excellent; also exposes structured *thinking* blocks | Works, but SDK streaming has been less stable historically |
-| **Vision / OCR** | Same model handles vision — one dependency for PDF OCR fallback | Vision is supported; quality is excellent | Vision supported; quality excellent |
-| **Instruction-following at T=0** | Solid; respects "only from context" with temperature ≤ 0.2 | **Best in class** — Claude is notably disciplined on refusals + citation grammar | Good, but more prone to paraphrase citations than to preserve the `[Sn]` tag exactly |
-| **Long context** | 128k | 200k (Haiku) | **1M+** |
-| **Vendor sprawl** | 1 key, 1 SDK, all four capabilities | 2 vendors (chat + separate embeddings) | 1 key, 1 SDK |
-| **Rate limits on free/low tier** | Generous | Tighter on Haiku | Generous, free tier for dev |
-| **SDK ergonomics (Python)** | Mature, widely used, great type hints | Mature | Improving, more churn |
-
-Prices are list-price as of Q2 2026. Claude Haiku 3.5 was the like-for-like cheap-tier comparison; Sonnet is stronger but ~10× the cost of `gpt-4o-mini`, which puts it in a different tier.
-
-### Why OpenAI won this build
-
-Five reasons, ranked by how much weight they carried:
-
-1. **Single vendor covers all four capabilities.** Chat, streaming, embeddings, and vision-OCR all live behind one `openai` SDK and one API key. Anthropic would have meant bolting on Voyage or Cohere for embeddings — doubling the surface area for keys, retry logic, error taxonomy, and cost modelling. For a 5-day scope that's a meaningful complexity tax.
-2. **Embedding economics.** At **$0.02 / 1M tokens**, embedding a 200-page PDF costs fractions of a cent. Ingestion is the RAG cost that scales linearly with knowledge-base size, so optimising it matters more than shaving cents off the chat call. Claude has no first-party embeddings — you end up back on OpenAI (or Voyage) anyway.
-3. **Grounding-quality gap is narrower than marketing suggests — for *this* prompt shape.** Claude is famously the most disciplined on refusals and citation fidelity, and in a week of prompt-design work the delta between Claude Haiku and `gpt-4o-mini` on my own fixtures came out small: both respected the `[S1]` citation grammar and both declined when off-context (once the prompt was written carefully, see `backend/app/rag/prompts.py → ANSWER_SYSTEM`). The 2-3% recall advantage Claude shows on long-context benchmarks didn't materialise at 800-token chunks.
-4. **Reasoning visibility is designed at the app layer, not the model layer.** Claude's headline feature is *extended-thinking / thinking blocks*. But the brief asks for **app-level** reasoning: "searching sources, found 8 passages across 3 sources, composing answer." I implement that as a typed SSE stream from my own four-stage orchestrator (`rewrite → retrieve → read → answer` in `backend/app/rag/chat.py`). The provider's internal thinking tokens are a different thing and not user-facing anyway, so paying the Claude premium for a feature I don't surface is poor value.
-5. **Gemini was genuinely attractive on price and context window**, but got dropped for two practical reasons. First, the Python SDK has seen more churn than OpenAI's and some of its streaming + tool-calling edges are still rougher — on a short timeline I want a library that behaves predictably. Second, early hand-testing showed Gemini paraphrases `[S1]` citations into prose (*"according to source one"*) more often than OpenAI does at T=0.2, which would have meant extra post-processing to recover the tag grammar the frontend relies on.
-
-### When I'd switch — honestly
-
-- **Long-context SOPs (multi-hundred-page policy binders).** Claude's 200k window + recall profile is a real advantage for docs where the answer can be anywhere. At that point the extra vendor for embeddings is worth it, and Sonnet-class quality starts to pay for itself.
-- **Truly scale-sensitive deployments.** Gemini Flash is ~2× cheaper than `gpt-4o-mini` on input tokens and its 1M context removes the need for careful chunking in some scenarios. If ingestion volume crossed into the tens-of-millions-of-tokens-per-day range, I'd run a second evaluation purely on unit economics.
-- **Air-gapped / regulated deployments.** If OpenAI is off the table for compliance reasons, I'd pair a self-hosted embedding model (`bge-large` or `nomic-embed-text`) with Claude via Bedrock, or go fully local on `llama.cpp` + a small open-weights model. The RAG architecture doesn't change — only the two thin adapters in `backend/app/ingestion/embedder.py` and `backend/app/rag/chat.py`.
-
-**Net:** OpenAI is the right default for a single-vendor, cost-sensitive, demo-quality build where the AI differentiation comes from the *RAG pipeline and reasoning UI*, not from which frontier model wrote the final sentence.
+Claude Haiku would be a strong runner-up if the project grew into long-context SOPs (200k-token PDFs) where Claude's context length and recall advantage start to matter.
 
 ---
 

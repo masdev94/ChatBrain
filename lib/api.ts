@@ -60,6 +60,20 @@ export class ApiError extends Error {
 export type SourceType = "pdf" | "text" | "url";
 export type SourceStatus = "pending" | "processing" | "ready" | "failed";
 
+/** Free-form metadata the ingestion pipeline writes onto a source row. */
+export interface SourceMetadata {
+  summary?: string;
+  // PDF
+  page_count?: number;
+  ocr_pages?: number;
+  // URL
+  domain?: string;
+  // Common
+  char_count?: number;
+  extracted_via?: string;
+  [key: string]: unknown;
+}
+
 export interface SourceRow {
   id: string;
   type: SourceType;
@@ -68,7 +82,7 @@ export interface SourceRow {
   error: string | null;
   url: string | null;
   storage_path: string | null;
-  metadata: Record<string, unknown>;
+  metadata: SourceMetadata;
   chunk_count: number;
   created_at: string;
   updated_at: string;
