@@ -6,6 +6,11 @@ and citations in every response.
 
 Built for the ScaleFlows developer challenge.
 
+<p align="center">
+  <img src="screenshots/chat.png" alt="ChatBrain chat view — a thought-process panel lists 'Understanding your question', 'Searching your knowledge base', the sources considered, and the final grounded answer." width="880" />
+</p>
+<p align="center"><sub><em>Every answer shows its work — what was searched, which sources were found, and which passages produced the final claim. When the answer isn't in your sources, it says so.</em></sub></p>
+
 - **Frontend**: Next.js 16 (App Router, React 19.2, Tailwind v4, `proxy.ts`) — talks to Supabase for auth and to the FastAPI backend for data + streaming.
 - **Backend**: FastAPI (Python 3.11+) — verifies Supabase JWTs, owns ingestion and RAG, streams chat turns as Server-Sent Events.
 - **Data**: Supabase Postgres with `pgvector`, Row-Level Security, and a private Storage bucket.
@@ -14,8 +19,20 @@ Built for the ScaleFlows developer challenge.
 ## Demo flow
 
 1. Sign up with email + password.
+
+    <p align="center">
+      <img src="screenshots/signIn.png" alt="ChatBrain sign-in page — dark UI with the tagline 'Your knowledge, answered back.' on the left and an email/password form on the right." width="820" />
+    </p>
+    <p align="center"><sub><em>The sign-in entry point. Sign-up lives one click away.</em></sub></p>
+
 2. Open **Knowledge base**, paste a company SOP, upload a PDF manual, and add a product-page URL.
 3. Watch the statuses flip from *queued* → *processing* → *ready* as the backend ingests them.
+
+    <p align="center">
+      <img src="screenshots/dashboard.png" alt="ChatBrain knowledge base — sidebar with conversations, a tabbed composer (Paste text, Upload PDF, Add URL), and a list of ingested sources below showing a PDF as 'Ready'." width="820" />
+    </p>
+    <p align="center"><sub><em>The knowledge base: add sources through any of the three tabs, then watch them flip to <strong>Ready</strong> as ingestion completes.</em></sub></p>
+
 4. Click **New chat**. Ask *"What's our return policy for damaged items?"* — the answer cites both the SOP and the product page inline.
 5. Follow up with *"And how long does the customer have?"* — the rewrite step turns the pronoun into a standalone query and the AI stays on-context.
 6. Ask something off-topic like *"What's the weather in Paris?"* — it declines honestly ("I couldn't find that in your knowledge base.") instead of hallucinating.
