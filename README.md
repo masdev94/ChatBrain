@@ -7,7 +7,7 @@ and citations in every response.
 Built for the ScaleFlows developer challenge.
 
 <p align="center">
-  <img src="screenshots/chat.png" alt="ChatBrain chat view — a thought-process panel lists 'Understanding your question', 'Searching your knowledge base', the sources considered, and the final grounded answer." width="880" />
+  <img src="screenshots/chat.png" alt="ChatBrain chat view — a thought-process panel lists 'Understanding your question', 'Searching your knowledge base', the sources considered, and the final grounded answer." width="820" />
 </p>
 <p align="center"><sub><em>Every answer shows its work — what was searched, which sources were found, and which passages produced the final claim. When the answer isn't in your sources, it says so.</em></sub></p>
 
