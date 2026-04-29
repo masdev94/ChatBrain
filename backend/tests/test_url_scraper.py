@@ -173,6 +173,84 @@ async def test_scrape_extracts_product_page_via_jsonld() -> None:
     assert result.rendered is False
 
 
+# A page where trafilatura's article pass *does* succeed (there's a real
+# <article>) but the page also carries rich structured data and image
+# alt text that the article text does NOT include. This is the
+# regression guard for the "first-layer wins" leak: under the old
+# pipeline, trafilatura layer 1 crossed the 200-char threshold and we
+# returned just the article body, silently dropping the JSON-LD specs
+# and alt text. With merge-all, we capture all three.
+HYBRID_PAGE_HTML = """
+<!doctype html>
+<html>
+<head>
+  <title>Aurora Studio Headphones — Acme</title>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Product",
+    "name": "Aurora Studio Headphones",
+    "description": "Hand-stitched memory foam earcups, USB-C charging, ANC profile editor in the companion app.",
+    "additionalProperty": [
+      {"@type": "PropertyValue", "name": "Driver size", "value": "40mm dual-magnet neodymium"},
+      {"@type": "PropertyValue", "name": "Frequency response", "value": "8Hz – 40kHz"}
+    ]
+  }
+  </script>
+</head>
+<body>
+  <nav>Shop</nav>
+  <main>
+    <article>
+      <h1>Aurora Studio Headphones</h1>
+      <p>The Aurora is built for long mixing sessions. We tuned the
+      drivers against a flat reference target so the sound you hear in
+      the studio is what listeners get on their devices.</p>
+      <p>Battery life is rated at 40 hours with ANC engaged, charging
+      to full in 90 minutes over USB-C.</p>
+    </article>
+    <aside>
+      <h2>In the box</h2>
+      <p>Aurora headphones, 1.5m USB-C cable, soft-shell carry case,
+      and a quick-start guide with the companion app QR code.</p>
+    </aside>
+    <img src="/aurora-side.jpg" alt="Aurora Studio Headphones in matte black, three-quarter side view, showing leather memory-foam earcups">
+  </main>
+  <footer>© Acme</footer>
+</body></html>
+"""
+
+
+@respx.mock
+async def test_scrape_merges_article_and_jsonld_and_aside_and_alt() -> None:
+    """Regression guard: a page where trafilatura's article pass
+    succeeds must NOT short-circuit the structured-data pass. The
+    merged output must include the article body, the JSON-LD product
+    description, the <aside> 'In the box' copy, and the image alt
+    text — all in one document."""
+    respx.get("https://shop.example.com/aurora-studio").mock(
+        return_value=httpx.Response(
+            200,
+            text=HYBRID_PAGE_HTML,
+            headers={"content-type": "text/html; charset=utf-8"},
+        )
+    )
+
+    result = await scrape_url("https://shop.example.com/aurora-studio")
+
+    # Article body (trafilatura layer 1).
+    assert "long mixing sessions" in result.text
+    assert "40 hours" in result.text
+    # JSON-LD description (structured layer).
+    assert "memory foam earcups" in result.text
+    # <aside> kept by the softer strip list (layer 3 body).
+    assert "soft-shell carry case" in result.text
+    # Image alt text.
+    assert "three-quarter side view" in result.text
+    # Chrome still removed.
+    assert "Acme" not in result.text or "© Acme" not in result.text
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # Playwright fallback
 # ────────────────────────────────────────────────────────────────────────────
