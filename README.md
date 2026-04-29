@@ -49,13 +49,9 @@ Built for the ScaleFlows developer challenge.
 - A Supabase project (cloud)
 - An OpenAI API key
 
+> The Supabase CLI is pinned as a `devDependency` of this repo, so a regular `npm install` from the repo root brings it in at the project-locked version with no global setup required. If you'd rather install it globally (e.g. to share one CLI across projects), use `winget install Supabase.CLI` on Windows or `brew install supabase/tap/supabase` on macOS — the `npm run db:*` scripts in this repo will pick up either one.
+
 ### 1. Supabase
-
-In a new Supabase project, open the **SQL editor** and run, in order:
-
-1. `supabase/migrations/20260421120000_init.sql` — schema, RLS, `match_chunks` RPC.
-2. `supabase/migrations/20260421120100_storage.sql` — private `sources` bucket + per-user policies.
-3. `supabase/migrations/20260429120000_chat_memories.sql` — long-term memory table + `match_memories` RPC for the per-conversation memory layer.
 
 From **Project Settings → API** collect:
 
@@ -63,6 +59,33 @@ From **Project Settings → API** collect:
 - `anon` public key → `SUPABASE_ANON_KEY` / `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - `service_role` key → `SUPABASE_SERVICE_ROLE_KEY` (backend only)
 - JWT secret (under *JWT Settings*, HS256) → `SUPABASE_JWT_SECRET`
+
+From **Connect → Direct connection** (or **Session pooler** if port 5432 is blocked on your network) collect:
+
+- The full `postgresql://…` URL → `SUPABASE_DB_URL` (replace `[YOUR-PASSWORD]` with the password from **Project Settings → Database**). This URL is **only** used by `npm run db:push` to apply migrations; the app itself talks to Supabase via the REST/Storage APIs above.
+
+Then, from the repo root:
+
+```bash
+cp backend/.env.example backend/.env       # paste in the values above
+npm install                                # frontend deps
+npm run db:push                            # applies all supabase/migrations/*.sql in order
+```
+
+`npm run db:push` is a thin wrapper around `supabase db push --db-url …` that loads `SUPABASE_DB_URL` from `backend/.env` automatically. The first run on a fresh project applies, in order:
+
+1. `20260421120000_init.sql` — core schema, RLS, `match_chunks` RPC.
+2. `20260421120100_storage.sql` — private `sources` bucket + per-user policies.
+3. `20260429120000_chat_memories.sql` — long-term memory table + `match_memories` RPC.
+
+Use `npm run db:push:dry` to preview without applying, or `npm run db:status` to list local-vs-remote migration state.
+
+> **Existing project, migrations applied earlier via the SQL editor?** Mark them as already-applied in the CLI's tracker before the first `db:push`:
+>
+> ```bash
+> supabase migration repair --status applied 20260421120000 \
+>   --status applied 20260421120100 --db-url $SUPABASE_DB_URL
+> ```
 
 For a frictionless demo you can disable email confirmation under **Authentication → Providers → Email**; otherwise users need to click the link in their inbox after signing up.
 
