@@ -52,9 +52,22 @@ def _verify(token: str) -> dict:
         raise HTTPException(status_code=401, detail="Malformed token") from exc
 
     alg = (header.get("alg") or "").upper()
+    # We deliberately do NOT validate ``iat`` against the wall clock.
+    # ``iat`` is informational ("when this token was issued") rather
+    # than a security primitive — the real "don't use before" claim
+    # would be ``nbf``, which Supabase doesn't emit. Validating it is
+    # a footgun on dev hosts whose clock drifts (Windows dev boxes
+    # commonly skew 30+ seconds), causing spurious 401s right after
+    # sign-in even though the token is otherwise perfectly valid.
+    # ``exp`` is still enforced strictly, so token lifetime is bounded.
+    # A small leeway covers any residual ``exp`` rounding skew.
     decode_opts = {
         "audience": "authenticated",
-        "options": {"require": ["sub", "exp"]},
+        "leeway": 30,
+        "options": {
+            "require": ["sub", "exp"],
+            "verify_iat": False,
+        },
     }
 
     try:

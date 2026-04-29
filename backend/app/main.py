@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .api import chat as chat_api
+from .api import chunks as chunks_api
 from .api import conversations as conversations_api
 from .api import sources as sources_api
 from .core.config import settings
@@ -41,3 +42,4 @@ async def health():
 app.include_router(sources_api.router)
 app.include_router(conversations_api.router)
 app.include_router(chat_api.router)
+app.include_router(chunks_api.router)

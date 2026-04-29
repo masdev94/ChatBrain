@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { BrandMark } from "@/components/brand";
 import { signOutAction } from "@/app/auth/actions";
 import { api, type Conversation } from "@/lib/api";
+import { useToast } from "@/components/toast";
 
 export function AppShell({
   email,
@@ -23,8 +24,13 @@ export function AppShell({
   // Tracks the in-flight delete so the modal's Delete button can show a busy
   // state and both modal buttons disable while the request runs.
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  // Sidebar conversation filter — purely client-side substring match.
+  const [convFilter, setConvFilter] = useState("");
+  // Inline-rename state for the conversation the user is currently editing.
+  const [renamingId, setRenamingId] = useState<string | null>(null);
   const pathname = usePathname();
   const router = useRouter();
+  const { toast } = useToast();
 
   const confirmingConversation = confirmingId
     ? conversations.find((c) => c.id === confirmingId) ?? null
@@ -77,6 +83,7 @@ export function AppShell({
   const deleteConversation = async (id: string) => {
     if (deletingId) return;
     const snapshot = conversations;
+    const removed = conversations.find((c) => c.id === id);
     setDeletingId(id);
     setConversations((prev) => prev.filter((c) => c.id !== id));
     try {
@@ -85,15 +92,63 @@ export function AppShell({
       if (pathname === `/app/chat/${id}`) {
         router.push("/app");
       }
-    } catch {
+      toast({
+        variant: "success",
+        description: removed
+          ? `Deleted "${removed.title}".`
+          : "Conversation deleted.",
+      });
+    } catch (err) {
       // Restore the list so the user doesn't silently lose their row.
       setConversations(snapshot);
+      toast({
+        variant: "error",
+        title: "Couldn't delete conversation",
+        description:
+          err instanceof Error ? err.message : "Please try again in a moment.",
+      });
     } finally {
       setDeletingId(null);
     }
   };
 
+  // Inline rename. Optimistic — the row updates immediately and rolls back
+  // with a toast if the PATCH fails.
+  const renameConversation = async (id: string, nextTitle: string) => {
+    const trimmed = nextTitle.trim();
+    const snapshot = conversations;
+    const current = conversations.find((c) => c.id === id);
+    if (!current || !trimmed || trimmed === current.title) {
+      setRenamingId(null);
+      return;
+    }
+    setConversations((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, title: trimmed } : c)),
+    );
+    setRenamingId(null);
+    try {
+      const updated = await api.conversations.rename(id, trimmed);
+      setConversations((prev) =>
+        prev.map((c) => (c.id === id ? { ...c, ...updated } : c)),
+      );
+    } catch (err) {
+      setConversations(snapshot);
+      toast({
+        variant: "error",
+        title: "Couldn't rename",
+        description:
+          err instanceof Error ? err.message : "The change was rolled back.",
+      });
+    }
+  };
+
   const conversationCount = conversations.length;
+  // Match against the visible title with a case-insensitive substring.
+  const filteredConversations = useMemo(() => {
+    const q = convFilter.trim().toLowerCase();
+    if (!q) return conversations;
+    return conversations.filter((c) => c.title.toLowerCase().includes(q));
+  }, [conversations, convFilter]);
 
   return (
     // h-screen (and h-dvh on mobile) constrains the whole shell to the
@@ -217,6 +272,18 @@ export function AppShell({
           ) : null}
         </div>
 
+        {/* Filter — only useful when the list is long enough that scanning
+            by eye gets slow. Hidden under 6 entries to keep the sidebar
+            quiet. */}
+        {conversationCount > 5 ? (
+          <div className="px-3 pb-2">
+            <ConversationFilterInput
+              value={convFilter}
+              onChange={setConvFilter}
+            />
+          </div>
+        ) : null}
+
         <nav
           aria-label="Conversations"
           className="flex-1 overflow-y-auto px-2 pb-4"
@@ -229,12 +296,15 @@ export function AppShell({
             </div>
           ) : conversations.length === 0 ? (
             <EmptyConversations />
+          ) : filteredConversations.length === 0 ? (
+            <NoFilterMatches query={convFilter} onClear={() => setConvFilter("")} />
           ) : (
             <ul className="space-y-0.5">
-              {conversations.map((c) => {
+              {filteredConversations.map((c) => {
                 const active = pathname === `/app/chat/${c.id}`;
                 const confirming = confirmingId === c.id;
                 const deleting = deletingId === c.id;
+                const renaming = renamingId === c.id;
                 return (
                   <ConversationRow
                     key={c.id}
@@ -242,7 +312,11 @@ export function AppShell({
                     active={active}
                     confirming={confirming}
                     deleting={deleting}
+                    renaming={renaming}
                     onRequestDelete={() => setConfirmingId(c.id)}
+                    onRequestRename={() => setRenamingId(c.id)}
+                    onCancelRename={() => setRenamingId(null)}
+                    onCommitRename={(t) => void renameConversation(c.id, t)}
                   />
                 );
               })}
@@ -392,13 +466,21 @@ function ConversationRow({
   active,
   confirming,
   deleting,
+  renaming,
   onRequestDelete,
+  onRequestRename,
+  onCancelRename,
+  onCommitRename,
 }: {
   conversation: Conversation;
   active: boolean;
   confirming: boolean;
   deleting: boolean;
+  renaming: boolean;
   onRequestDelete: () => void;
+  onRequestRename: () => void;
+  onCancelRename: () => void;
+  onCommitRename: (nextTitle: string) => void;
 }) {
   const ts = useMemo(
     () => formatRelativeShort(conversation.updated_at || conversation.created_at),
@@ -406,6 +488,22 @@ function ConversationRow({
   );
   const title = conversation.title || "New conversation";
   const actionsVisible = confirming || deleting;
+
+  if (renaming) {
+    return (
+      <li
+        className={`group relative rounded-lg ${
+          active ? "bg-surface-2" : "bg-surface-2/40"
+        } ring-1 ring-accent/40`}
+      >
+        <RenameInput
+          initialValue={title}
+          onCommit={onCommitRename}
+          onCancel={onCancelRename}
+        />
+      </li>
+    );
+  }
 
   return (
     <li
@@ -421,6 +519,11 @@ function ConversationRow({
         href={`/app/chat/${conversation.id}`}
         title={title}
         aria-current={active ? "page" : undefined}
+        onDoubleClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onRequestRename();
+        }}
         className={`relative flex items-center gap-2 rounded-lg pl-3 pr-2 py-2 text-[13px] ${
           active
             ? "text-foreground"
@@ -458,7 +561,8 @@ function ConversationRow({
         </span>
       </Link>
 
-      {/* Delete affordance — hidden until hover/focus; opens the confirm modal. */}
+      {/* Action affordances — hidden until hover/focus. Rename opens an
+          inline input; Delete opens the confirm modal. */}
       <div
         className={`absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 ${
           actionsVisible
@@ -469,6 +573,32 @@ function ConversationRow({
           transition: "opacity var(--dur-fast) var(--ease-out)",
         }}
       >
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onRequestRename();
+          }}
+          disabled={deleting}
+          aria-label={`Rename "${title}"`}
+          title="Rename"
+          className="h-7 w-7 grid place-items-center rounded-md text-foreground-subtle hover:text-foreground hover:bg-surface-2 disabled:opacity-50"
+          style={{
+            transition:
+              "background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out)",
+          }}
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden>
+            <path
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M12 20h9M16.5 3.5a2.121 2.121 0 113 3L7 19l-4 1 1-4 12.5-12.5z"
+            />
+          </svg>
+        </button>
         <button
           type="button"
           onClick={(e) => {
@@ -503,6 +633,115 @@ function ConversationRow({
         </button>
       </div>
     </li>
+  );
+}
+
+// Inline rename input. Auto-focuses, selects, commits on Enter / blur,
+// cancels on Escape. Stops navigation when used inside the row's <Link>.
+function RenameInput({
+  initialValue,
+  onCommit,
+  onCancel,
+}: {
+  initialValue: string;
+  onCommit: (next: string) => void;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState(initialValue);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.focus();
+    el.select();
+  }, []);
+
+  return (
+    <input
+      ref={inputRef}
+      type="text"
+      value={value}
+      maxLength={120}
+      onChange={(e) => setValue(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          onCommit(value);
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          onCancel();
+        }
+      }}
+      onBlur={() => {
+        const trimmed = value.trim();
+        if (!trimmed || trimmed === initialValue) onCancel();
+        else onCommit(value);
+      }}
+      onClick={(e) => e.stopPropagation()}
+      aria-label="Rename conversation"
+      className="w-full bg-surface-1 text-[13px] text-foreground rounded-lg pl-3 pr-2 py-2 outline-none ring-1 ring-accent/50 focus:ring-accent"
+      style={{
+        transition: "box-shadow var(--dur-fast) var(--ease-out)",
+      }}
+    />
+  );
+}
+
+function ConversationFilterInput({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  return (
+    <div className="relative">
+      <span
+        aria-hidden
+        className="absolute left-2.5 top-1/2 -translate-y-1/2 text-foreground-subtle"
+      >
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+          <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="1.8" />
+          <path
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            d="M20 20l-3.5-3.5"
+          />
+        </svg>
+      </span>
+      <input
+        type="search"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Filter conversations…"
+        aria-label="Filter conversations"
+        className="w-full bg-surface-2/60 hover:bg-surface-2 focus:bg-surface-2 text-[12.5px] text-foreground placeholder:text-foreground-subtle rounded-md pl-8 pr-2.5 h-8 outline-none focus-ring"
+        style={{
+          transition: "background-color var(--dur-fast) var(--ease-out)",
+        }}
+      />
+    </div>
+  );
+}
+
+function NoFilterMatches({ query, onClear }: { query: string; onClear: () => void }) {
+  return (
+    <div className="mt-1 mx-2 rounded-lg border border-dashed border-border bg-surface-2/30 px-3 py-4 text-center">
+      <p className="text-[12px] text-foreground-muted">
+        No matches for{" "}
+        <span className="text-foreground font-medium">&ldquo;{query}&rdquo;</span>.
+      </p>
+      <button
+        type="button"
+        onClick={onClear}
+        className="mt-1.5 text-[11.5px] text-accent hover:text-accent-strong font-medium"
+        style={{ transition: "color var(--dur-fast) var(--ease-out)" }}
+      >
+        Clear filter
+      </button>
+    </div>
   );
 }
 

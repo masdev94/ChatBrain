@@ -97,11 +97,30 @@ export interface Conversation {
 
 export interface Citation {
   source_id: string;
+  /** Backend chunk id — present on citations emitted by current backend
+   *  versions, undefined for messages saved before the field was added. */
+  chunk_id?: string;
   title: string;
   type: SourceType;
   url: string | null;
   snippet: string;
   tag: string;
+}
+
+export interface ChunkOut {
+  id: string;
+  source_id: string;
+  chunk_index: number;
+  content: string;
+  token_count: number;
+  created_at: string;
+}
+
+export interface ChunkNeighbours {
+  source: { id: string; title: string; type: SourceType; url: string | null };
+  previous: ChunkOut | null;
+  current: ChunkOut;
+  next: ChunkOut | null;
 }
 
 export interface ReasoningEvent {
@@ -159,6 +178,10 @@ export const api = {
       return (await res.json()) as SourceRow;
     },
     remove: (id: string) => jsonRequest<void>("DELETE", `/sources/${id}`),
+  },
+  chunks: {
+    neighbours: (id: string) =>
+      jsonRequest<ChunkNeighbours>("GET", `/chunks/${id}/neighbours`),
   },
   conversations: {
     list: () => jsonRequest<Conversation[]>("GET", "/conversations"),

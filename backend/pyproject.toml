@@ -19,6 +19,7 @@ dependencies = [
     "pyjwt[crypto]>=2.9",
     "tenacity>=9.0",
     "structlog>=24.4",
+    "playwright>=1.48",
 ]
 
 [project.optional-dependencies]

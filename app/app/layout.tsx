@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { AppShell } from "@/components/app-shell";
+import { ToastProvider } from "@/components/toast";
 
 export default async function AppLayout({
   children,
@@ -16,5 +17,9 @@ export default async function AppLayout({
 
   if (!user) redirect("/sign-in");
 
-  return <AppShell email={user.email ?? "Signed in"}>{children}</AppShell>;
+  return (
+    <ToastProvider>
+      <AppShell email={user.email ?? "Signed in"}>{children}</AppShell>
+    </ToastProvider>
+  );
 }
