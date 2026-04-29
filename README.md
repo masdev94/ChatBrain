@@ -55,6 +55,7 @@ In a new Supabase project, open the **SQL editor** and run, in order:
 
 1. `supabase/migrations/20260421120000_init.sql` — schema, RLS, `match_chunks` RPC.
 2. `supabase/migrations/20260421120100_storage.sql` — private `sources` bucket + per-user policies.
+3. `supabase/migrations/20260429120000_chat_memories.sql` — long-term memory table + `match_memories` RPC for the per-conversation memory layer.
 
 From **Project Settings → API** collect:
 
@@ -77,9 +78,12 @@ python -m venv .venv
 # source .venv/bin/activate
 
 pip install -e ".[dev]"
-cp .env.example .env         # fill in values
+playwright install chromium    # for the JS-rendered URL fallback
+cp .env.example .env           # fill in values
 uvicorn app.main:app --reload --port 8000
 ```
+
+> The `playwright install` step downloads a ~150 MB Chromium binary used as a fallback when a URL is JS-rendered and `trafilatura` can't extract its main article from the raw HTML. Set `PLAYWRIGHT_ENABLED=false` in `.env` to skip the fallback (and the install) on minimal hosts.
 
 OpenAPI docs at http://localhost:8000/docs.
 
@@ -216,25 +220,29 @@ Each case surfaces as the source row's `error` field and flips status to `failed
 
 The brief asks for the AI's thinking to be *inside the response itself*, not behind a spinner. The stack solves this end-to-end:
 
-1. **Four-stage orchestrator** (`backend/app/rag/chat.py`). Every chat turn goes through explicit stages so they can be narrated:
+1. **Six-stage orchestrator** (`backend/app/rag/chat.py`). Every chat turn goes through explicit stages so they can be narrated:
    - **Rewrite** — if there's history, rewrite the user's message into a self-contained query (`REWRITE_SYSTEM` prompt, small LLM call at `temperature=0`).
-   - **Retrieve** — embed the standalone query, call the `match_chunks` RPC scoped to the user.
+   - **Recall** — query the per-conversation long-term memory store (`match_memories` RPC) for fragments of past turns relevant to the rewritten question. See [Long-term memory](#long-term-memory) below.
+   - **Decompose** — split compound questions into 1–3 standalone sub-queries (`DECOMPOSE_SYSTEM`), informed by the recalled memories so pronouns like *"those two"* resolve correctly.
+   - **Retrieve** — embed every sub-query (one batch), fan out `match_chunks` in parallel, fuse the results with **Reciprocal Rank Fusion**, then apply a per-source diversity cap.
    - **Read** — summarise which sources and how many chunks we picked up.
-   - **Answer** — stream a grounded completion with an inline `[Sn]` citation grammar.
+   - **Answer** — stream a grounded completion with an inline `[Sn]` citation grammar. Memory fragments are included as a *non-citable* continuity block; only `[Sn]` excerpts can be cited.
 
 2. **Typed SSE events.** The streaming endpoint (`POST /chat/stream`) emits:
 
    ```json
    { "type": "thinking", "text": "Understanding your question…" }
-   { "type": "thinking", "text": "Rewrote follow-up as: \"What is the return policy?\"" }
+   { "type": "thinking", "text": "Rewrote follow-up as: \"What is the warranty on the Pro and Lite?\"" }
+   { "type": "thinking", "text": "Recalled 1 earlier moment in this conversation: Compared the Pro and Lite headphone models on noise-cancellation and battery life…" }
+   { "type": "thinking", "text": "Splitting into 2 sub-questions: \"What is the warranty on the Pro?\", \"What is the warranty on the Lite?\"" }
    { "type": "thinking", "text": "Searching your knowledge base…" }
-   { "type": "sources_considered", "sources": [ { "source_id": "…", "title": "Return Policy SOP", "type": "text", "chunk_count": 3, "top_similarity": 0.87 }, … ] }
-   { "type": "thinking", "text": "Reading 8 passages across 3 sources: Return Policy SOP, Product Page, Order FAQ." }
+   { "type": "sources_considered", "sources": [ { "source_id": "…", "title": "Pro Spec Sheet", "type": "pdf", "chunk_count": 3, "top_similarity": 0.87 }, … ] }
+   { "type": "thinking", "text": "Reading 8 passages across 3 sources: Pro Spec Sheet, Lite Spec Sheet, Warranty FAQ." }
    { "type": "thinking", "text": "Composing a grounded answer…" }
-   { "type": "token", "text": "We accept returns for " }
-   { "type": "token", "text": "damaged items within 30 days " }
+   { "type": "token", "text": "The Pro carries a 2-year warranty " }
+   { "type": "token", "text": "while the Lite is covered for 1 year " }
    …
-   { "type": "citations", "citations": [ { "source_id": "…", "tag": "S1", "title": "Return Policy SOP", "snippet": "…" } ] }
+   { "type": "citations", "citations": [ { "source_id": "…", "tag": "S1", "title": "Pro Spec Sheet", "snippet": "…" } ] }
    { "type": "done" }
    ```
 
@@ -252,6 +260,42 @@ The brief asks for the AI's thinking to be *inside the response itself*, not beh
    - When the answer isn't in the context, say so verbatim — don't guess.
 
 So the user always sees **what was searched, what was found, and which passages produced the final claims** — inside the response bubble, not beside it.
+
+---
+
+## Long-term memory
+
+Implemented in `backend/app/rag/memory.py` and the `chat_memories` table.
+
+The agent literature ([DB-GPT's "long-term memory" pattern](http://docs.dbgpt.cn/docs/agents/modules/memory/long_term_memory/) is a clean reference) frames long-term memory as *"external vector storage that agents can rapidly query and retrieve from as needed."* ChatBrain implements that for chat continuity — specifically to fix the failure mode where compound, cross-source follow-up questions ("compare those two and tell me about returns") regress to incoherent retrieval because every turn started from scratch.
+
+**Write path.** After each completed assistant turn, a background task asks `gpt-4o-mini` (the existing cheap model) to compress the question + answer + cited source titles into one short, embedding-friendly line:
+
+> *"Refund policy: 30-day return window for damaged items; refunds to original payment method (Refund SOP, Customer Care Manual)."*
+
+That fragment is embedded with `text-embedding-3-small` and persisted in `chat_memories` along with `turn_index`, `importance`, and the array of `source_ids` the turn cited. The write happens **after** the assistant message is persisted and outside the user's stream, so it never blocks response latency. Failures are logged and swallowed — long-term memory is a quality feature, not a correctness one.
+
+**Read path.** When a new turn arrives, after the rewrite step but before decomposition, the orchestrator runs a vector-similarity lookup against `chat_memories` scoped to `(user_id, conversation_id)` via the `match_memories` RPC. Fragments below `memory_min_similarity` (default `0.6`) are filtered out so off-topic memories don't pollute the prompt. The surviving fragments feed two consumers:
+
+1. **The decomposer** receives them under a `Recent context:` block in the user payload. The `DECOMPOSE_SYSTEM` prompt explicitly restricts the model to using this context **only** to resolve pronouns and implicit references ("those two", "the second one") — never to invent new topics. This is the primary cross-source improvement: a curt follow-up like *"and what about pricing on those two?"* now decomposes into *"What is the price of the Pro?"* + *"What is the price of the Lite?"* because the memory carries the prior comparison forward.
+2. **The answer LLM** receives them under a `Recent context from this conversation (for continuity, not citable):` block placed *before* the `[S1] [S2] …` chunk context. The grounding contract is preserved because `ANSWER_SYSTEM` still requires every factual claim to come from a numbered excerpt — the memory block is for continuity only.
+
+**Why this works where the rewrite step alone didn't.** The rewrite pass sees raw last-N turns and is good at trivial pronoun resolution, but it loses fidelity on multi-turn arcs because each turn's full text is verbose, mixes question + answer, and dilutes the topic vector. Memory fragments are deliberately **short, factual, and embedded for retrieval** — much closer to the user's next-turn query in vector space, and far more discoverable when the conversation has had ten exchanges.
+
+**Schema + isolation.**
+
+```sql
+chat_memories (
+  id, user_id, conversation_id,
+  turn_index, summary, embedding vector(1536),
+  importance real, source_ids uuid[],
+  created_at
+)
+```
+
+Conversation-scoped RLS *and* a conversation predicate inside the `match_memories` RPC mean memories never leak across conversations even when the backend uses the service role to bypass RLS. Tunable via `MEMORY_ENABLED`, `MEMORY_TOP_K`, and `MEMORY_MIN_SIMILARITY` env vars.
+
+**Tested.** `backend/tests/test_memory.py` covers: summarization (clean output, blank-input short-circuit, LLM-failure resilience), persistence (embedding shape, source-id dedup, kill switch), retrieval (similarity threshold, conversation scoping, kill switch), and the integration lynchpin — that the decomposer's user payload actually contains the `Recent context` block when memories are passed in.
 
 ---
 

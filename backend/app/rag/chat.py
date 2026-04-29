@@ -25,11 +25,19 @@ from supabase import Client
 
 from ..core.config import settings
 from ..core.logging import logger
-from .prompt import ANSWER_SYSTEM, REWRITE_SYSTEM, build_context_block
-from .retrieval import RetrievedChunk, retrieve
+from .memory import ConversationMemory, retrieve_memories
+from .prompt import (
+    ANSWER_SYSTEM,
+    DECOMPOSE_SYSTEM,
+    REWRITE_SYSTEM,
+    build_context_block,
+    build_memory_block,
+)
+from .retrieval import RetrievedChunk, retrieve_multi
 
 _CITATION_RE = re.compile(r"\[S(\d+)\]")
 _MAX_HISTORY_TURNS = 10
+_MAX_SUBQUERIES = 3
 
 
 @dataclass
@@ -75,6 +83,67 @@ async def _rewrite_query(history: list[Turn], question: str) -> str:
     return (resp.choices[0].message.content or question).strip() or question
 
 
+async def _decompose_query(
+    question: str,
+    *,
+    memories: list[ConversationMemory] | None = None,
+) -> list[str]:
+    """Split a compound question into 1-3 standalone sub-queries.
+
+    Returns a list of length >= 1. If the model thinks the question is a
+    single topic it returns one element (the original question). Heavy
+    heuristic shortcut: if the input doesn't contain any of the obvious
+    compound markers AND no memory context was passed, skip the LLM call
+    entirely. We can't shortcut when we have memory context because that
+    context might let the decomposer split a question whose surface
+    looks single-topic but actually references multiple prior items
+    ("and what's their pricing?" after a discussion of two products).
+    """
+    q = question.strip()
+    if not q:
+        return [q]
+
+    has_memories = bool(memories)
+    lowered = q.lower()
+    compound_markers = (" and ", " also ", "; ", " vs ", " versus ", "compare ")
+    looks_compound = any(m in lowered for m in compound_markers) or lowered.count(",") >= 2
+    if not looks_compound and not has_memories:
+        return [q]
+
+    # When memories are available, append them to the user payload as a
+    # "Recent context" block. The DECOMPOSE_SYSTEM prompt explicitly
+    # restricts the model to using this only for resolving pronouns and
+    # implicit references, never to invent topics.
+    user_content = q
+    if memories:
+        memory_block = build_memory_block([m.summary for m in memories])
+        if memory_block:
+            user_content = f"{q}\n\nRecent context:\n{memory_block}"
+
+    client = _client()
+    try:
+        resp = await client.chat.completions.create(
+            model=settings.openai_chat_model,
+            messages=[
+                {"role": "system", "content": DECOMPOSE_SYSTEM},
+                {"role": "user", "content": user_content},
+            ],
+            temperature=0,
+            max_tokens=256,
+        )
+    except Exception:  # noqa: BLE001
+        # Decomposition is an optimisation, not a hard requirement. If the
+        # call fails, fall back to single-query retrieval rather than
+        # bringing the whole turn down.
+        logger.exception("chat.decompose_failed")
+        return [q]
+
+    raw = (resp.choices[0].message.content or "").strip()
+    lines = [ln.strip(" -*\u2022\t") for ln in raw.splitlines() if ln.strip()]
+    queries = [ln for ln in lines if ln][:_MAX_SUBQUERIES]
+    return queries or [q]
+
+
 def _summarize_sources(chunks: list[RetrievedChunk]) -> list[dict[str, Any]]:
     """Group retrieved chunks by source for display in the thinking trace."""
     by_source: dict[str, dict[str, Any]] = {}
@@ -112,6 +181,9 @@ def _extract_citations(
             out.append(
                 {
                     "source_id": c.source_id,
+                    # The chunk id is what the citation drawer needs to load
+                    # the full chunk plus its immediate neighbours.
+                    "chunk_id": c.id,
                     "title": c.source_title,
                     "type": c.source_type,
                     "url": c.source_url,
@@ -126,6 +198,7 @@ async def stream_chat_turn(
     db: Client,
     *,
     user_id: str,
+    conversation_id: str | None = None,
     history: list[Turn],
     question: str,
     result: ChatResult,
@@ -135,6 +208,12 @@ async def stream_chat_turn(
     `result` is mutated in place so the API layer can persist the final
     message after the stream completes (including if the client disconnects
     mid-stream, as the background task will finish on its own).
+
+    ``conversation_id`` is optional so legacy callers / tests that don't
+    care about long-term memory can keep working unchanged. When supplied,
+    we run a per-conversation memory lookup after the rewrite step and
+    feed the results to both the decomposer and the answer LLM, which is
+    the mechanism behind the cross-source/follow-up improvements.
     """
 
     def record(event: dict[str, Any]) -> dict[str, Any]:
@@ -156,13 +235,55 @@ async def stream_chat_turn(
                 }
             )
 
+        # Long-term memory lookup for this conversation. Runs after the
+        # rewrite so the embedding query is already standalone, which is
+        # what the memory fragments were summarized to match. Failures
+        # inside retrieve_memories degrade silently to an empty list.
+        memories: list[ConversationMemory] = []
+        if conversation_id and settings.memory_enabled:
+            memories = await retrieve_memories(
+                db,
+                user_id=user_id,
+                conversation_id=conversation_id,
+                query=standalone,
+            )
+            if memories:
+                preview = "; ".join(
+                    m.summary[:90] + ("…" if len(m.summary) > 90 else "")
+                    for m in memories[:2]
+                )
+                yield record(
+                    {
+                        "type": "thinking",
+                        "text": (
+                            f"Recalled {len(memories)} earlier moment"
+                            f"{'s' if len(memories) != 1 else ''} in this "
+                            f"conversation: {preview}"
+                        ),
+                    }
+                )
+
+        sub_queries = await _decompose_query(standalone, memories=memories)
+        if len(sub_queries) > 1:
+            preview = ", ".join(f"\u201c{s}\u201d" for s in sub_queries)
+            yield record(
+                {
+                    "type": "thinking",
+                    "text": (
+                        f"Splitting into {len(sub_queries)} sub-questions: {preview}"
+                    ),
+                }
+            )
+
         yield record({"type": "thinking", "text": "Searching your knowledge base…"})
 
-        chunks = await retrieve(
+        chunks = await retrieve_multi(
             db,
             user_id=user_id,
-            query=standalone,
-            top_k=settings.retrieval_top_k,
+            queries=sub_queries,
+            top_k_per_query=settings.retrieval_top_k_per_query,
+            final_top_k=settings.retrieval_final_top_k,
+            max_per_source=settings.retrieval_max_per_source,
         )
 
         if not chunks:
@@ -198,7 +319,20 @@ async def stream_chat_turn(
         context = build_context_block(chunks)
         yield record({"type": "thinking", "text": "Composing a grounded answer…"})
 
+        # The memory block goes BEFORE the source context so the model
+        # treats it as continuity-only — never as a citable source. The
+        # ANSWER_SYSTEM contract still requires every claim to be
+        # grounded in [Sn] excerpts, which keeps the answer auditable.
+        memory_block = build_memory_block([m.summary for m in memories])
+        memory_section = (
+            f"Recent context from this conversation (for continuity, not "
+            f"citable):\n{memory_block}\n\n---\n\n"
+            if memory_block
+            else ""
+        )
+
         user_content = (
+            f"{memory_section}"
             "Context:\n"
             f"{context}\n\n"
             "---\n\n"

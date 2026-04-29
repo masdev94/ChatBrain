@@ -20,6 +20,8 @@ import {
   type Message,
   type ReasoningEvent,
 } from "@/lib/api";
+import { useToast } from "@/components/toast";
+import { CitationDrawer } from "@/components/citation-drawer";
 
 // A streaming assistant message held only in React state until the server
 // has finished saving it and we re-fetch. We don't invent an id for it.
@@ -36,14 +38,34 @@ type ChatItem =
   | { kind: "stored"; message: Message }
   | { kind: "streaming"; message: StreamingMessage };
 
+// Threshold (px) for "is the user near the bottom?". Below this we consider
+// the conversation pinned and autoscroll on new content; above it we hide
+// the autoscroll behaviour and surface the floating Jump button instead so
+// the user can read older messages without being yanked away.
+const NEAR_BOTTOM_PX = 120;
+// Distance (px) from bottom at which the floating Jump button appears.
+const SHOW_JUMP_PX = 200;
+
 export function ChatView({ conversationId }: { conversationId: string }) {
   const [items, setItems] = useState<ChatItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
+  // True when the user has scrolled up far enough that we should stop
+  // pinning to the bottom on new tokens. Reset by Jump-to-latest or by
+  // the user scrolling back near the bottom themselves.
+  const [pinned, setPinned] = useState(true);
+  // True when the user is far enough from the bottom that we should show
+  // the Jump button (≥ SHOW_JUMP_PX). Slightly looser than `!pinned` so the
+  // button doesn't flicker right at the threshold.
+  const [showJump, setShowJump] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const { toast } = useToast();
+  // Citation the user clicked. The drawer reads chunk + neighbours from
+  // the backend on its own; we only own the open/close state here.
+  const [openCitation, setOpenCitation] = useState<Citation | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -102,17 +124,60 @@ export function ChatView({ conversationId }: { conversationId: string }) {
     };
   }, [conversationId]);
 
-  // Autoscroll on new content.
+  // Autoscroll on new content — but only when the user is "pinned" near
+  // the bottom. If they've scrolled up to read older messages we leave
+  // their position alone and surface the Jump button instead.
   useEffect(() => {
+    if (!pinned) return;
     const el = scrollRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [items]);
+  }, [items, pinned]);
+
+  // Track scroll position. Drives both the pinned/unpinned autoscroll
+  // toggle and the visibility of the floating Jump button.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+      setPinned(distance <= NEAR_BOTTOM_PX);
+      setShowJump(distance >= SHOW_JUMP_PX);
+    };
+    onScroll();
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
+
+  // Reset to pinned whenever the conversation changes — the new view should
+  // start at the bottom, not preserve scroll from the previous chat. Uses
+  // the React-recommended "previous prop" tracker so the reset is part of
+  // render rather than a cascading setState-in-effect.
+  const [prevConversationId, setPrevConversationId] = useState(conversationId);
+  if (prevConversationId !== conversationId) {
+    setPrevConversationId(conversationId);
+    setPinned(true);
+    setShowJump(false);
+  }
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [conversationId]);
+
+  const jumpToBottom = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    setPinned(true);
+  }, []);
 
   const send = async () => {
     const content = input.trim();
     if (!content || streaming) return;
     setInput("");
+    // Sending always means the user wants to see the response — re-pin
+    // even if they had scrolled up earlier.
+    setPinned(true);
 
     // Optimistically render the user's turn.
     const nowIso = new Date().toISOString();
@@ -238,18 +303,39 @@ export function ChatView({ conversationId }: { conversationId: string }) {
         </div>
       ) : null}
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto">
+      <div ref={scrollRef} className="relative flex-1 overflow-y-auto">
         <div className="mx-auto max-w-3xl px-4 md:px-6 py-8 space-y-6">
           {empty ? <ChatEmpty onPick={(q) => setInput(q)} /> : null}
           {items.map((it, i) =>
             it.kind === "stored" ? (
-              <StoredMessage key={it.message.id} message={it.message} />
+              <StoredMessage
+                key={it.message.id}
+                message={it.message}
+                onCopy={(text) => copyAnswer(text, toast)}
+                onOpenCitation={setOpenCitation}
+              />
             ) : (
-              <AssistantStream key={`s-${i}`} message={it.message} />
+              <AssistantStream
+                key={`s-${i}`}
+                message={it.message}
+                onCopy={(text) => copyAnswer(text, toast)}
+                onOpenCitation={setOpenCitation}
+              />
             ),
           )}
         </div>
+        {showJump ? (
+          <JumpToLatestButton
+            onClick={jumpToBottom}
+            highlight={streaming && !pinned}
+          />
+        ) : null}
       </div>
+
+      <CitationDrawer
+        citation={openCitation}
+        onClose={() => setOpenCitation(null)}
+      />
 
       {/* Composer — single layered surface with primary-ring focus glow. */}
       <div className="border-t border-border bg-[color-mix(in_oklab,var(--bg-primary)_82%,transparent)] backdrop-blur-md px-4 py-3.5">
@@ -328,7 +414,15 @@ export function ChatView({ conversationId }: { conversationId: string }) {
 // ──────────────────────────────────────────────────────────────────────────
 // Renderers
 // ──────────────────────────────────────────────────────────────────────────
-function StoredMessage({ message }: { message: Message }) {
+function StoredMessage({
+  message,
+  onCopy,
+  onOpenCitation,
+}: {
+  message: Message;
+  onCopy: (text: string) => void;
+  onOpenCitation: (c: Citation) => void;
+}) {
   if (message.role === "user") {
     return <UserBubble content={message.content} />;
   }
@@ -338,11 +432,21 @@ function StoredMessage({ message }: { message: Message }) {
       reasoning={message.reasoning ?? []}
       citations={message.citations ?? []}
       streaming={false}
+      onCopy={onCopy}
+      onOpenCitation={onOpenCitation}
     />
   );
 }
 
-function AssistantStream({ message }: { message: StreamingMessage }) {
+function AssistantStream({
+  message,
+  onCopy,
+  onOpenCitation,
+}: {
+  message: StreamingMessage;
+  onCopy: (text: string) => void;
+  onOpenCitation: (c: Citation) => void;
+}) {
   return (
     <AssistantBubble
       content={message.content}
@@ -350,6 +454,8 @@ function AssistantStream({ message }: { message: StreamingMessage }) {
       citations={message.citations}
       streaming={message.streaming}
       error={message.error}
+      onCopy={onCopy}
+      onOpenCitation={onOpenCitation}
     />
   );
 }
@@ -370,13 +476,20 @@ function AssistantBubble({
   citations,
   streaming,
   error,
+  onCopy,
+  onOpenCitation,
 }: {
   content: string;
   reasoning: ReasoningEvent[];
   citations: Citation[];
   streaming: boolean;
   error?: string;
+  onCopy: (text: string) => void;
+  onOpenCitation: (c: Citation) => void;
 }) {
+  // Show the Copy affordance only on finished, non-empty answers — copying
+  // a partial mid-stream answer is rarely what the user wants.
+  const canCopy = !streaming && content.trim().length > 0;
   return (
     <div className="flex gap-3">
       {/* Avatar rail — a small amber dot doubles as "this is the assistant"
@@ -399,8 +512,16 @@ function AssistantBubble({
           </div>
         ) : null}
         {content ? (
-          <div className="mt-2.5 rounded-2xl rounded-tl-md border border-border bg-surface px-5 py-4 shadow-sm">
-            <AnswerText content={content} streaming={streaming} />
+          <div className="group relative mt-2.5 rounded-2xl rounded-tl-md border border-border bg-surface px-5 py-4 shadow-sm">
+            <AnswerText
+              content={content}
+              streaming={streaming}
+              citations={citations}
+              onOpenCitation={onOpenCitation}
+            />
+            {canCopy ? (
+              <CopyAnswerButton onClick={() => onCopy(content)} />
+            ) : null}
           </div>
         ) : streaming ? (
           <div className="mt-2.5 rounded-2xl rounded-tl-md border border-border bg-surface px-5 py-4">
@@ -409,10 +530,114 @@ function AssistantBubble({
             </span>
           </div>
         ) : null}
-        {citations.length > 0 ? <CitationsBar citations={citations} /> : null}
+        {citations.length > 0 ? (
+          <CitationsBar
+            citations={citations}
+            onOpenCitation={onOpenCitation}
+          />
+        ) : null}
       </div>
     </div>
   );
+}
+
+function CopyAnswerButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label="Copy answer"
+      title="Copy answer"
+      className="absolute right-2.5 bottom-2.5 inline-flex h-7 w-7 items-center justify-center rounded-md text-foreground-subtle hover:text-foreground hover:bg-surface-2 opacity-0 group-hover:opacity-100 focus:opacity-100 focus-ring"
+      style={{
+        transition:
+          "opacity var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out)",
+      }}
+    >
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden>
+        <rect
+          x="9"
+          y="9"
+          width="11"
+          height="11"
+          rx="2"
+          stroke="currentColor"
+          strokeWidth="1.8"
+        />
+        <path
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M5 15V6a2 2 0 012-2h9"
+        />
+      </svg>
+    </button>
+  );
+}
+
+function JumpToLatestButton({
+  onClick,
+  highlight,
+}: {
+  onClick: () => void;
+  highlight: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`pointer-events-auto absolute bottom-4 left-1/2 -translate-x-1/2 z-10 inline-flex items-center gap-1.5 rounded-full px-3.5 h-8 text-[12.5px] font-medium border shadow-md focus-ring ${
+        highlight
+          ? "bg-accent text-[#0b0d12] border-accent hover:bg-accent-strong"
+          : "bg-surface text-foreground-muted border-border hover:bg-surface-2 hover:text-foreground"
+      }`}
+      style={{
+        animation: "fadeUp var(--dur-fast) var(--ease-spring) both",
+        transition:
+          "background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out)",
+      }}
+      aria-label="Jump to latest message"
+    >
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden>
+        <path
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M6 9l6 6 6-6"
+        />
+      </svg>
+      {highlight ? "New messages" : "Jump to latest"}
+    </button>
+  );
+}
+
+// Helper extracted from JSX so callers don't have to repeat the toast
+// boilerplate. The clipboard API can throw on insecure contexts (file://,
+// some embedded views) so we surface a useful error toast instead of
+// silently failing.
+function copyAnswer(text: string, toast: ReturnType<typeof useToast>["toast"]) {
+  if (!navigator.clipboard) {
+    toast({
+      variant: "error",
+      title: "Couldn't copy",
+      description: "Clipboard isn't available in this context.",
+    });
+    return;
+  }
+  navigator.clipboard
+    .writeText(text)
+    .then(() => {
+      toast({ variant: "success", description: "Answer copied to clipboard." });
+    })
+    .catch(() => {
+      toast({
+        variant: "error",
+        title: "Couldn't copy",
+        description: "Your browser blocked clipboard access.",
+      });
+    });
 }
 
 /**
@@ -537,33 +762,43 @@ function TypeDot({ type }: { type: "pdf" | "text" | "url" }) {
 function AnswerText({
   content,
   streaming,
+  citations,
+  onOpenCitation,
 }: {
   content: string;
   streaming: boolean;
+  citations: Citation[];
+  onOpenCitation: (c: Citation) => void;
 }) {
+  // Index citations by their tag (e.g. "S1") so the inline pill lookup is
+  // O(1) regardless of citation count.
+  const byTag: Record<string, Citation> = {};
+  for (const c of citations) byTag[c.tag] = c;
+
+  const render = (children: ReactNode) =>
+    renderWithCitations(children, byTag, onOpenCitation);
+
   return (
     <div className="answer-prose">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
-          p: ({ children }) => <p>{renderWithCitations(children)}</p>,
-          li: ({ children }) => <li>{renderWithCitations(children)}</li>,
-          h1: ({ children }) => <h1>{renderWithCitations(children)}</h1>,
-          h2: ({ children }) => <h2>{renderWithCitations(children)}</h2>,
-          h3: ({ children }) => <h3>{renderWithCitations(children)}</h3>,
-          h4: ({ children }) => <h4>{renderWithCitations(children)}</h4>,
-          strong: ({ children }) => (
-            <strong>{renderWithCitations(children)}</strong>
-          ),
-          em: ({ children }) => <em>{renderWithCitations(children)}</em>,
-          td: ({ children }) => <td>{renderWithCitations(children)}</td>,
-          th: ({ children }) => <th>{renderWithCitations(children)}</th>,
+          p: ({ children }) => <p>{render(children)}</p>,
+          li: ({ children }) => <li>{render(children)}</li>,
+          h1: ({ children }) => <h1>{render(children)}</h1>,
+          h2: ({ children }) => <h2>{render(children)}</h2>,
+          h3: ({ children }) => <h3>{render(children)}</h3>,
+          h4: ({ children }) => <h4>{render(children)}</h4>,
+          strong: ({ children }) => <strong>{render(children)}</strong>,
+          em: ({ children }) => <em>{render(children)}</em>,
+          td: ({ children }) => <td>{render(children)}</td>,
+          th: ({ children }) => <th>{render(children)}</th>,
           blockquote: ({ children }) => (
-            <blockquote>{renderWithCitations(children)}</blockquote>
+            <blockquote>{render(children)}</blockquote>
           ),
           a: ({ href, children }) => (
             <a href={href} target="_blank" rel="noreferrer">
-              {renderWithCitations(children)}
+              {render(children)}
             </a>
           ),
           pre: ({ children }) => <pre>{children}</pre>,
@@ -579,14 +814,40 @@ function AnswerText({
 
 const CITATION_RE = /\[S(\d+)\]/g;
 
-function CitationPill({ n }: { n: number }) {
+function CitationPill({
+  n,
+  citation,
+  onOpen,
+}: {
+  n: number;
+  citation?: Citation;
+  onOpen: (c: Citation) => void;
+}) {
+  const baseClass =
+    "mx-0.5 inline-flex items-center rounded-md border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-[11px] font-medium text-accent align-[1px]";
+  const label = `S${n}`;
+
+  if (!citation) {
+    return (
+      <span className={baseClass} title={`Source ${n}`}>
+        {label}
+      </span>
+    );
+  }
   return (
-    <span
-      className="mx-0.5 inline-flex items-center rounded-md border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-[11px] font-medium text-accent align-[1px]"
-      title={`Source ${n}`}
+    <button
+      type="button"
+      onClick={() => onOpen(citation)}
+      title={citation.title}
+      aria-label={`Open citation ${label}: ${citation.title}`}
+      className={`${baseClass} hover:bg-accent/20 hover:border-accent/70 focus-ring cursor-pointer`}
+      style={{
+        transition:
+          "background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out)",
+      }}
     >
-      S{n}
-    </span>
+      {label}
+    </button>
   );
 }
 
@@ -596,12 +857,16 @@ function CitationPill({ n }: { n: number }) {
  * nodes (e.g. nested <strong>, <code>) are descended into so citations work
  * even when wrapped in inline formatting.
  */
-function renderWithCitations(children: ReactNode): ReactNode {
+function renderWithCitations(
+  children: ReactNode,
+  byTag: Record<string, Citation>,
+  onOpen: (c: Citation) => void,
+): ReactNode {
   const out: ReactNode[] = [];
   let key = 0;
   Children.forEach(children, (child) => {
     if (typeof child === "string") {
-      out.push(...splitCitationString(child, () => key++));
+      out.push(...splitCitationString(child, () => key++, byTag, onOpen));
       return;
     }
     if (typeof child === "number" || typeof child === "boolean") {
@@ -614,7 +879,11 @@ function renderWithCitations(children: ReactNode): ReactNode {
       const nested = el.props?.children;
       if (nested !== undefined) {
         out.push(
-          cloneElement(el, { key: key++ }, renderWithCitations(nested)),
+          cloneElement(
+            el,
+            { key: key++ },
+            renderWithCitations(nested, byTag, onOpen),
+          ),
         );
       } else {
         out.push(cloneElement(el, { key: key++ }));
@@ -626,7 +895,12 @@ function renderWithCitations(children: ReactNode): ReactNode {
   return out;
 }
 
-function splitCitationString(text: string, nextKey: () => number): ReactNode[] {
+function splitCitationString(
+  text: string,
+  nextKey: () => number,
+  byTag: Record<string, Citation>,
+  onOpen: (c: Citation) => void,
+): ReactNode[] {
   const out: ReactNode[] = [];
   let last = 0;
   let m: RegExpExecArray | null;
@@ -637,7 +911,15 @@ function splitCitationString(text: string, nextKey: () => number): ReactNode[] {
         <Fragment key={nextKey()}>{text.slice(last, m.index)}</Fragment>,
       );
     }
-    out.push(<CitationPill key={nextKey()} n={parseInt(m[1], 10)} />);
+    const n = parseInt(m[1], 10);
+    out.push(
+      <CitationPill
+        key={nextKey()}
+        n={n}
+        citation={byTag[`S${n}`]}
+        onOpen={onOpen}
+      />,
+    );
     last = m.index + m[0].length;
   }
   if (last < text.length) {
@@ -646,50 +928,37 @@ function splitCitationString(text: string, nextKey: () => number): ReactNode[] {
   return out;
 }
 
-function CitationsBar({ citations }: { citations: Citation[] }) {
+function CitationsBar({
+  citations,
+  onOpenCitation,
+}: {
+  citations: Citation[];
+  onOpenCitation: (c: Citation) => void;
+}) {
   return (
     <div className="mt-3 flex flex-wrap gap-2">
-      {citations.map((c) => {
-        const body = (
-          <>
-            <TypeDot type={c.type} />
-            <span className="font-mono text-[10.5px] font-semibold text-accent">
-              {c.tag}
-            </span>
-            <span className="truncate max-w-[18rem] text-foreground-muted group-hover:text-foreground">
-              {c.title}
-            </span>
-          </>
-        );
-        const className =
-          "group inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-2 py-1 text-xs hover:border-border-strong hover:bg-surface-2";
-        const style = {
-          transition:
-            "background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out)",
-        } as const;
-        return c.url ? (
-          <a
-            key={`${c.source_id}-${c.tag}`}
-            href={c.url}
-            target="_blank"
-            rel="noreferrer"
-            className={className}
-            style={style}
-            title={c.snippet}
-          >
-            {body}
-          </a>
-        ) : (
-          <span
-            key={`${c.source_id}-${c.tag}`}
-            className={className}
-            style={style}
-            title={c.snippet}
-          >
-            {body}
+      {citations.map((c) => (
+        <button
+          type="button"
+          key={`${c.source_id}-${c.tag}`}
+          onClick={() => onOpenCitation(c)}
+          title={c.snippet}
+          aria-label={`Open citation ${c.tag}: ${c.title}`}
+          className="group inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-2 py-1 text-xs hover:border-border-strong hover:bg-surface-2 focus-ring text-left"
+          style={{
+            transition:
+              "background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out)",
+          }}
+        >
+          <TypeDot type={c.type} />
+          <span className="font-mono text-[10.5px] font-semibold text-accent">
+            {c.tag}
           </span>
-        );
-      })}
+          <span className="truncate max-w-[18rem] text-foreground-muted group-hover:text-foreground">
+            {c.title}
+          </span>
+        </button>
+      ))}
     </div>
   );
 }

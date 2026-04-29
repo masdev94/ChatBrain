@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api, type SourceRow, type SourceType } from "@/lib/api";
+import { useToast } from "@/components/toast";
 
 type Tab = "text" | "pdf" | "url";
 type TypeFilter = "all" | SourceType;
@@ -76,6 +77,10 @@ const TAB_DEFS: {
   },
 ];
 
+// Lightweight URL detector — good enough to flag "user pasted a single URL"
+// without false-positiving on prose that contains a URL among other content.
+const URL_LIKE = /^https?:\/\/[^\s]+$/i;
+
 export function SourcesView() {
   const [sources, setSources] = useState<SourceRow[] | null>(null);
   const [tab, setTab] = useState<Tab>("text");
@@ -88,15 +93,35 @@ export function SourcesView() {
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const highlightTimer = useRef<number | null>(null);
 
+  // Drag-and-drop overlay state. We only show the overlay when the user is
+  // dragging *files* (not text selections inside the page) so it doesn't
+  // pop up while editing one of the inputs.
+  const [overlayActive, setOverlayActive] = useState(false);
+  const dragDepth = useRef(0);
+
+  // One-shot prefill payloads consumed by the active form on next render.
+  // Passed in as props; the form clears them via onConsume after applying.
+  const [pdfPrefill, setPdfPrefill] = useState<File | null>(null);
+  const [textPrefill, setTextPrefill] = useState<string | null>(null);
+  const [urlPrefill, setUrlPrefill] = useState<string | null>(null);
+
+  const { toast } = useToast();
+
   const refresh = useCallback(async () => {
     try {
       const list = await api.sources.list();
       setSources(list);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load sources.");
+      // Background polling errors get a toast — we don't want to flicker
+      // the page banner just because a single poll failed.
+      toast({
+        variant: "error",
+        title: "Couldn't refresh sources",
+        description: e instanceof Error ? e.message : "Network error.",
+      });
     }
-  }, []);
+  }, [toast]);
 
   useEffect(() => {
     let cancelled = false;
@@ -166,10 +191,18 @@ export function SourcesView() {
     try {
       await api.sources.remove(target.id);
       setPendingDelete(null);
+      toast({
+        variant: "success",
+        description: `Deleted "${target.title}".`,
+      });
     } catch (e) {
       setSources(prev ?? null);
-      setError(e instanceof Error ? e.message : "Delete failed.");
       setPendingDelete(null);
+      toast({
+        variant: "error",
+        title: "Couldn't delete source",
+        description: e instanceof Error ? e.message : "Please try again.",
+      });
     } finally {
       setDeleting(false);
     }
@@ -204,8 +237,98 @@ export function SourcesView() {
     });
   }, [sources, typeFilter, query]);
 
+  // ── Drag-and-drop overlay ──────────────────────────────────────────────
+  // We listen at the page-level wrapper because we want to catch files
+  // dropped anywhere on the sources page, not just on the PDF tab. The
+  // existing PDF drop zone keeps working — when the active tab is PDF
+  // its inner handler will run too, and the file lands in the same place.
+  const overlayHasFiles = (e: React.DragEvent<HTMLDivElement>) =>
+    Array.from(e.dataTransfer?.types ?? []).includes("Files");
+
+  const onPageDragEnter = (e: React.DragEvent<HTMLDivElement>) => {
+    if (!overlayHasFiles(e)) return;
+    e.preventDefault();
+    dragDepth.current += 1;
+    setOverlayActive(true);
+  };
+  const onPageDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    if (!overlayHasFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+  };
+  const onPageDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    if (!overlayHasFiles(e)) return;
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setOverlayActive(false);
+  };
+  const onPageDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    if (!overlayHasFiles(e)) return;
+    e.preventDefault();
+    dragDepth.current = 0;
+    setOverlayActive(false);
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length === 0) return;
+    const pdf = files.find(
+      (f) =>
+        f.type === "application/pdf" ||
+        f.name.toLowerCase().endsWith(".pdf"),
+    );
+    if (pdf) {
+      setTab("pdf");
+      setPdfPrefill(pdf);
+      toast({ variant: "info", description: `Picked up ${pdf.name}.` });
+      return;
+    }
+    // Reject anything we can't handle — text files would go through the
+    // text tab but at that point the user might as well paste them.
+    toast({
+      variant: "error",
+      title: "Unsupported file",
+      description: "Drop a PDF, or paste text in the Paste text tab.",
+    });
+  };
+
+  // ── Smart paste handlers ──────────────────────────────────────────────
+  const onUrlSwitchToText = useCallback(
+    (text: string) => {
+      setTab("text");
+      setTextPrefill(text);
+      toast({
+        variant: "info",
+        description: "That looked like prose, not a URL — switched to Paste text.",
+      });
+    },
+    [toast],
+  );
+
+  const onTextOfferUrl = useCallback(
+    (text: string) => {
+      toast({
+        variant: "info",
+        title: "Looks like a URL",
+        description: "Add it as a URL source instead?",
+        action: {
+          label: "Switch to URL",
+          onClick: () => {
+            setTab("url");
+            setUrlPrefill(text);
+          },
+        },
+      });
+    },
+    [toast],
+  );
+
   return (
-    <div className="space-y-8">
+    <div
+      className="relative space-y-8"
+      onDragEnter={onPageDragEnter}
+      onDragOver={onPageDragOver}
+      onDragLeave={onPageDragLeave}
+      onDrop={onPageDrop}
+    >
+      {overlayActive ? <DragDropOverlay /> : null}
+
       {/* Composer */}
       <section className="surface-elevated rounded-2xl overflow-hidden">
         <div
@@ -225,9 +348,29 @@ export function SourcesView() {
           ))}
         </div>
         <div className="p-5 md:p-6">
-          {tab === "text" ? <AddTextForm onAdded={onAdded} /> : null}
-          {tab === "pdf" ? <AddPdfForm onAdded={onAdded} /> : null}
-          {tab === "url" ? <AddUrlForm onAdded={onAdded} /> : null}
+          {tab === "text" ? (
+            <AddTextForm
+              onAdded={onAdded}
+              prefill={textPrefill}
+              onConsumePrefill={() => setTextPrefill(null)}
+              onDetectUrl={onTextOfferUrl}
+            />
+          ) : null}
+          {tab === "pdf" ? (
+            <AddPdfForm
+              onAdded={onAdded}
+              prefill={pdfPrefill}
+              onConsumePrefill={() => setPdfPrefill(null)}
+            />
+          ) : null}
+          {tab === "url" ? (
+            <AddUrlForm
+              onAdded={onAdded}
+              prefill={urlPrefill}
+              onConsumePrefill={() => setUrlPrefill(null)}
+              onSwitchToText={onUrlSwitchToText}
+            />
+          ) : null}
         </div>
       </section>
 
@@ -317,6 +460,53 @@ export function SourcesView() {
           onConfirm={onConfirmDelete}
         />
       ) : null}
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Drag-and-drop overlay
+// ──────────────────────────────────────────────────────────────────────────
+// Page-level affordance shown while the user is dragging a file anywhere on
+// the sources page. pointer-events-none means the wrapping div's drop
+// handlers still receive the drop — the overlay is purely visual.
+function DragDropOverlay() {
+  return (
+    <div
+      aria-hidden
+      className="pointer-events-none fixed inset-0 z-40 flex items-center justify-center p-8"
+    >
+      <div
+        className="absolute inset-0 bg-black/55 backdrop-blur-[2px]"
+        style={{ animation: "fadeUp var(--dur-fast) var(--ease-out) both" }}
+      />
+      <div
+        className="relative max-w-md w-full surface-elevated rounded-2xl border-2 border-dashed border-accent/60 bg-surface/95 px-8 py-10 text-center shadow-2xl"
+        style={{
+          animation: "fadeUp var(--dur-med) var(--ease-spring) both",
+        }}
+      >
+        <span
+          aria-hidden
+          className="mx-auto mb-4 inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-accent/10 text-accent border border-accent/30"
+        >
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+            <path
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M12 16V4m0 0l-4 4m4-4l4 4M4 16v3a2 2 0 002 2h12a2 2 0 002-2v-3"
+            />
+          </svg>
+        </span>
+        <h3 className="text-[16px] font-semibold tracking-tight text-foreground">
+          Drop your PDF here
+        </h3>
+        <p className="mt-1.5 text-[13px] text-foreground-muted">
+          We&rsquo;ll route it through the upload pipeline automatically.
+        </p>
+      </div>
     </div>
   );
 }
@@ -541,11 +731,36 @@ function NoResultsState({ onClear }: { onClear: () => void }) {
 // ──────────────────────────────────────────────────────────────────────────
 // Add forms
 // ──────────────────────────────────────────────────────────────────────────
-function AddTextForm({ onAdded }: { onAdded: (row: SourceRow) => void }) {
+function AddTextForm({
+  onAdded,
+  prefill,
+  onConsumePrefill,
+  onDetectUrl,
+}: {
+  onAdded: (row: SourceRow) => void;
+  prefill?: string | null;
+  onConsumePrefill?: () => void;
+  onDetectUrl?: (url: string) => void;
+}) {
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // One-shot prefill from a page-level drop or smart paste. We append so
+  // the user's existing draft isn't clobbered. Applied during render via a
+  // "previous prop" tracker so the lint rule against setState-in-effect
+  // stays happy.
+  const [prevTextPrefill, setPrevTextPrefill] = useState<
+    string | null | undefined
+  >(prefill);
+  if (prevTextPrefill !== prefill) {
+    setPrevTextPrefill(prefill);
+    if (prefill) {
+      setContent((prev) => (prev ? `${prev}\n\n${prefill}` : prefill));
+      onConsumePrefill?.();
+    }
+  }
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -587,6 +802,16 @@ function AddTextForm({ onAdded }: { onAdded: (row: SourceRow) => void }) {
         <textarea
           value={content}
           onChange={(e) => setContent(e.target.value)}
+          onPaste={(e) => {
+            // Smart-paste: if the textarea is empty and the user pastes a
+            // single URL, offer to switch to the URL tab via toast.
+            if (!onDetectUrl) return;
+            if (content.trim()) return;
+            const pasted = e.clipboardData.getData("text/plain").trim();
+            if (pasted && URL_LIKE.test(pasted) && pasted.length < 2048) {
+              onDetectUrl(pasted);
+            }
+          }}
           onKeyDown={(e) => {
             // ⌘/Ctrl + Enter submits — saves a trip to the mouse for power
             // users pasting walls of text.
@@ -647,7 +872,15 @@ function isMac(): boolean {
   return /mac|iphone|ipad|ipod/i.test(navigator.platform || navigator.userAgent);
 }
 
-function AddPdfForm({ onAdded }: { onAdded: (row: SourceRow) => void }) {
+function AddPdfForm({
+  onAdded,
+  prefill,
+  onConsumePrefill,
+}: {
+  onAdded: (row: SourceRow) => void;
+  prefill?: File | null;
+  onConsumePrefill?: () => void;
+}) {
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -668,6 +901,20 @@ function AddPdfForm({ onAdded }: { onAdded: (row: SourceRow) => void }) {
     setError(null);
     setFile(f);
   };
+
+  // Page-level drag-and-drop drop landed here — pick it up and clear the
+  // payload so we don't reapply on the next render. Uses the "previous prop"
+  // tracker so the setState happens during render rather than via an effect.
+  const [prevPdfPrefill, setPrevPdfPrefill] = useState<File | null | undefined>(
+    prefill,
+  );
+  if (prevPdfPrefill !== prefill) {
+    setPrevPdfPrefill(prefill);
+    if (prefill) {
+      acceptFile(prefill);
+      onConsumePrefill?.();
+    }
+  }
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -842,11 +1089,35 @@ function AddPdfForm({ onAdded }: { onAdded: (row: SourceRow) => void }) {
   );
 }
 
-function AddUrlForm({ onAdded }: { onAdded: (row: SourceRow) => void }) {
+function AddUrlForm({
+  onAdded,
+  prefill,
+  onConsumePrefill,
+  onSwitchToText,
+}: {
+  onAdded: (row: SourceRow) => void;
+  prefill?: string | null;
+  onConsumePrefill?: () => void;
+  onSwitchToText?: (text: string) => void;
+}) {
   const [url, setUrl] = useState("");
   const [title, setTitle] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Prefill the URL field from a page-level paste. Uses the "previous prop"
+  // tracker pattern so the copy-into-local-state happens during render and
+  // the lint rule against setState-in-effect stays happy.
+  const [prevUrlPrefill, setPrevUrlPrefill] = useState<
+    string | null | undefined
+  >(prefill);
+  if (prevUrlPrefill !== prefill) {
+    setPrevUrlPrefill(prefill);
+    if (prefill) {
+      setUrl(prefill);
+      onConsumePrefill?.();
+    }
+  }
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -878,6 +1149,25 @@ function AddUrlForm({ onAdded }: { onAdded: (row: SourceRow) => void }) {
           type="url"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
+          onPaste={(e) => {
+            // Smart-paste: if the URL field is empty and the user pastes
+            // content that doesn't look like a URL, route it to the text
+            // tab instead of forcing them to switch by hand.
+            if (!onSwitchToText) return;
+            if (url.trim()) return;
+            const pasted = e.clipboardData.getData("text/plain");
+            const trimmed = pasted.trim();
+            if (!trimmed) return;
+            // Multi-line or long content → definitely not a URL.
+            const looksUrl =
+              !/[\r\n]/.test(trimmed) &&
+              trimmed.length < 2048 &&
+              URL_LIKE.test(trimmed);
+            if (!looksUrl) {
+              e.preventDefault();
+              onSwitchToText(pasted);
+            }
+          }}
           placeholder="https://example.com/your-article"
           required
           className="w-full h-11 rounded-md border border-border bg-surface-2 px-3 text-sm text-foreground placeholder:text-foreground-subtle focus:outline-none focus:border-accent/60"
