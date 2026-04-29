@@ -19,6 +19,12 @@ export function AppShell({
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  // Desktop sidebar collapsed state. Persisted to localStorage so it
+  // survives page reloads — real products remember layout preferences.
+  const [collapsed, setCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem("sidebar-collapsed") === "1";
+  });
   // Which conversation (if any) has the delete confirmation modal open.
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   // Tracks the in-flight delete so the modal's Delete button can show a busy
@@ -31,6 +37,10 @@ export function AppShell({
   const pathname = usePathname();
   const router = useRouter();
   const { toast } = useToast();
+
+  useEffect(() => {
+    localStorage.setItem("sidebar-collapsed", collapsed ? "1" : "0");
+  }, [collapsed]);
 
   const confirmingConversation = confirmingId
     ? conversations.find((c) => c.id === confirmingId) ?? null
@@ -183,35 +193,69 @@ export function AppShell({
 
       <aside
         aria-label="Primary"
-        className={`fixed md:static inset-y-0 left-0 z-40 w-72 shrink-0 border-r border-border flex flex-col md:translate-x-0 ${
-          mobileOpen ? "translate-x-0" : "-translate-x-full"
+        className={`fixed md:static inset-y-0 left-0 z-40 shrink-0 border-r border-border flex flex-col md:translate-x-0 ${
+          collapsed ? "md:w-[68px]" : "w-72"
+        } ${mobileOpen ? "translate-x-0" : "-translate-x-full"} ${
+          !mobileOpen && !collapsed ? "w-72" : ""
         }`}
         style={{
-          transition: "transform var(--dur-med) var(--ease-out)",
-          // Subtle vertical depth — never flat, never busy.
+          transition: "transform var(--dur-med) var(--ease-out), width var(--dur-med) var(--ease-out)",
           background:
             "linear-gradient(180deg, color-mix(in oklab, var(--surface) 100%, transparent) 0%, color-mix(in oklab, var(--surface) 92%, var(--bg-primary)) 100%)",
         }}
       >
-        {/* Sidebar header — quiet, just the brand. */}
-        <div className="h-16 flex items-center px-4 border-b border-border/70">
+        {/* Sidebar header — brand + collapse toggle */}
+        <div className="h-14 flex items-center justify-between px-3 border-b border-border/70">
           <Link
             href="/app"
-            className="flex items-center gap-2 focus-ring rounded-md px-1.5 py-1 -mx-1.5 hover:bg-surface-2/60"
+            className="flex items-center gap-2 focus-ring rounded-md px-1.5 py-1 hover:bg-surface-2/60"
             style={{
               transition: "background-color var(--dur-fast) var(--ease-out)",
             }}
           >
-            <BrandMark size={22} />
+            <BrandMark size={22} showWordmark={!collapsed} />
           </Link>
+          <button
+            type="button"
+            onClick={() => setCollapsed((v) => !v)}
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            className="hidden md:grid h-7 w-7 place-items-center rounded-md text-foreground-subtle hover:text-foreground hover:bg-surface-2 shrink-0"
+            style={{
+              transition:
+                "background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out)",
+            }}
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              aria-hidden
+              style={{
+                transform: collapsed ? "rotate(180deg)" : "none",
+                transition: "transform var(--dur-med) var(--ease-out)",
+              }}
+            >
+              <path
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M11 19l-7-7 7-7M18 19l-7-7 7-7"
+              />
+            </svg>
+          </button>
         </div>
 
         {/* Primary actions */}
-        <div className="px-3 pt-3 pb-2 space-y-1">
+        <div className={`px-3 pt-3 pb-2 space-y-1 ${collapsed ? "px-2" : ""}`}>
           <button
             onClick={newChat}
             disabled={creating}
-            className="group relative w-full inline-flex items-center justify-center gap-2 rounded-lg bg-accent text-[#0b0d12] font-medium py-2.5 text-[13.5px] tracking-tight disabled:opacity-60 hover:bg-accent-strong overflow-hidden"
+            title={collapsed ? "New chat" : undefined}
+            className={`btn-press group relative w-full inline-flex items-center justify-center gap-2 rounded-lg bg-accent text-[#0b0d12] font-medium text-[13.5px] tracking-tight disabled:opacity-60 hover:bg-accent-strong overflow-hidden ${
+              collapsed ? "h-10 w-10 p-0" : "py-2.5"
+            }`}
             style={{
               transition:
                 "background-color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out)",
@@ -227,12 +271,13 @@ export function AppShell({
                 d="M12 5v14M5 12h14"
               />
             </svg>
-            {creating ? "Creating…" : "New chat"}
+            {collapsed ? null : creating ? "Creating…" : "New chat"}
           </button>
 
           <NavItem
             href="/app/sources"
             active={pathname === "/app/sources"}
+            collapsed={collapsed}
             icon={
               <svg
                 width="15"
@@ -260,22 +305,24 @@ export function AppShell({
           />
         </div>
 
-        {/* Conversations section */}
-        <div className="mt-2 px-5 pt-3 pb-1.5 flex items-center justify-between">
-          <span className="text-[10.5px] uppercase tracking-[0.14em] font-medium text-foreground-subtle">
-            Conversations
-          </span>
-          {conversationCount > 0 ? (
-            <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1.5 rounded-full bg-surface-2 text-[10.5px] font-medium text-foreground-muted tabular-nums">
-              {conversationCount}
+        {/* Conversations section — hidden when sidebar is collapsed */}
+        {collapsed ? null : (
+          <div className="mt-2 px-5 pt-3 pb-1.5 flex items-center justify-between">
+            <span className="text-[10.5px] uppercase tracking-[0.14em] font-medium text-foreground-subtle">
+              Conversations
             </span>
-          ) : null}
-        </div>
+            {conversationCount > 0 ? (
+              <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1.5 rounded-full bg-surface-2 text-[10.5px] font-medium text-foreground-muted tabular-nums">
+                {conversationCount}
+              </span>
+            ) : null}
+          </div>
+        )}
 
         {/* Filter — only useful when the list is long enough that scanning
             by eye gets slow. Hidden under 6 entries to keep the sidebar
             quiet. */}
-        {conversationCount > 5 ? (
+        {!collapsed && conversationCount > 5 ? (
           <div className="px-3 pb-2">
             <ConversationFilterInput
               value={convFilter}
@@ -286,9 +333,9 @@ export function AppShell({
 
         <nav
           aria-label="Conversations"
-          className="flex-1 overflow-y-auto px-2 pb-4"
+          className={`flex-1 overflow-y-auto pb-4 ${collapsed ? "px-1" : "px-2"}`}
         >
-          {loading ? (
+          {collapsed ? null : loading ? (
             <div className="space-y-1.5 px-2 pt-1">
               <div className="skeleton h-8 w-full" />
               <div className="skeleton h-8 w-5/6" />
@@ -325,8 +372,8 @@ export function AppShell({
         </nav>
 
         {/* Account + sign-out */}
-        <div className="border-t border-border/70 p-3 bg-[color-mix(in_oklab,var(--surface)_55%,transparent)] backdrop-blur-sm">
-          <div className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 hover:bg-surface-2/50"
+        <div className={`border-t border-border/70 bg-[color-mix(in_oklab,var(--surface)_55%,transparent)] backdrop-blur-sm ${collapsed ? "p-2" : "p-3"}`}>
+          <div className={`flex items-center rounded-lg hover:bg-surface-2/50 ${collapsed ? "justify-center p-1.5" : "gap-2.5 px-2 py-1.5"}`}
                style={{
                  transition:
                    "background-color var(--dur-fast) var(--ease-out)",
@@ -335,6 +382,7 @@ export function AppShell({
             <div
               aria-hidden
               className="relative h-8 w-8 shrink-0 rounded-full bg-linear-to-br from-accent/45 to-accent/10 border border-accent/25 grid place-items-center text-[12px] font-semibold text-foreground"
+              title={collapsed ? email : undefined}
             >
               {initial(email)}
               <span
@@ -343,52 +391,56 @@ export function AppShell({
                 style={{ borderColor: "var(--surface)" }}
               />
             </div>
-            <div className="min-w-0 flex-1">
-              <div
-                className="text-[12.5px] text-foreground truncate font-medium"
-                title={email}
-              >
-                {email}
-              </div>
-              <div className="text-[10.5px] text-foreground-subtle">
-                Online
-              </div>
-            </div>
-            <form action={signOutAction}>
-              <button
-                type="submit"
-                title="Sign out"
-                aria-label="Sign out"
-                className="shrink-0 grid place-items-center h-8 w-8 rounded-md text-foreground-muted hover:text-danger hover:bg-danger/10"
-                style={{
-                  transition:
-                    "background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out)",
-                }}
-              >
-                <svg
-                  width="15"
-                  height="15"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  aria-hidden
-                >
-                  <path
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"
-                  />
-                  <path
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M10 17l-5-5 5-5M5 12h12"
-                  />
-                </svg>
-              </button>
-            </form>
+            {collapsed ? null : (
+              <>
+                <div className="min-w-0 flex-1">
+                  <div
+                    className="text-[12.5px] text-foreground truncate font-medium"
+                    title={email}
+                  >
+                    {email}
+                  </div>
+                  <div className="text-[10.5px] text-foreground-subtle">
+                    Online
+                  </div>
+                </div>
+                <form action={signOutAction}>
+                  <button
+                    type="submit"
+                    title="Sign out"
+                    aria-label="Sign out"
+                    className="shrink-0 grid place-items-center h-8 w-8 rounded-md text-foreground-muted hover:text-danger hover:bg-danger/10"
+                    style={{
+                      transition:
+                        "background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out)",
+                    }}
+                  >
+                    <svg
+                      width="15"
+                      height="15"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      aria-hidden
+                    >
+                      <path
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"
+                      />
+                      <path
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M10 17l-5-5 5-5M5 12h12"
+                      />
+                    </svg>
+                  </button>
+                </form>
+              </>
+            )}
           </div>
         </div>
       </aside>
@@ -425,17 +477,22 @@ function NavItem({
   active,
   icon,
   label,
+  collapsed,
 }: {
   href: string;
   active: boolean;
   icon: React.ReactNode;
   label: string;
+  collapsed?: boolean;
 }) {
   return (
     <Link
       href={href}
       aria-current={active ? "page" : undefined}
-      className={`relative flex items-center gap-2.5 rounded-lg pl-3.5 pr-3 py-2 text-[13px] ${
+      title={collapsed ? label : undefined}
+      className={`relative flex items-center rounded-lg text-[13px] ${
+        collapsed ? "justify-center h-10 w-10 mx-auto" : "gap-2.5 pl-3.5 pr-3 py-2"
+      } ${
         active
           ? "bg-surface-2 text-foreground"
           : "text-foreground-muted hover:bg-surface-2/60 hover:text-foreground"
@@ -445,7 +502,7 @@ function NavItem({
           "background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out)",
       }}
     >
-      {active ? (
+      {active && !collapsed ? (
         <span
           aria-hidden
           className="absolute left-1 top-2 bottom-2 w-[3px] rounded-full bg-accent"
@@ -456,7 +513,7 @@ function NavItem({
       >
         {icon}
       </span>
-      <span className="truncate">{label}</span>
+      {collapsed ? null : <span className="truncate">{label}</span>}
     </Link>
   );
 }

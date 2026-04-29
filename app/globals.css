@@ -309,6 +309,79 @@ select:focus-visible,
   border-radius: var(--radius-sm);
 }
 
+/* ─────────────────────────────────────────────────────────────────────────
+   Interactive micro-interactions — production feel
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* Subtle press feedback — used on primary/accent buttons to feel "real". */
+.btn-press:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+/* Card-lift — interactive cards that "float" on hover for depth hierarchy. */
+.card-lift {
+  transition:
+    transform var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+.card-lift:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+/* Glow ring — accent-colored ring that subtly glows on focus/hover. Used
+   on the composer and high-value CTAs. */
+.glow-ring:focus-within {
+  box-shadow:
+    0 0 0 1px var(--primary-ring),
+    0 0 20px -4px color-mix(in oklab, var(--primary) 20%, transparent);
+}
+
+/* Stagger enter — for lists of cards that animate in sequence. */
+@keyframes staggerUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.stagger-enter {
+  animation: staggerUp var(--dur-reveal) var(--ease-out) both;
+}
+.stagger-enter:nth-child(1) { animation-delay: 0ms; }
+.stagger-enter:nth-child(2) { animation-delay: 40ms; }
+.stagger-enter:nth-child(3) { animation-delay: 80ms; }
+.stagger-enter:nth-child(4) { animation-delay: 120ms; }
+.stagger-enter:nth-child(5) { animation-delay: 160ms; }
+.stagger-enter:nth-child(6) { animation-delay: 200ms; }
+.stagger-enter:nth-child(7) { animation-delay: 240ms; }
+.stagger-enter:nth-child(8) { animation-delay: 280ms; }
+.stagger-enter:nth-child(9) { animation-delay: 320ms; }
+.stagger-enter:nth-child(10) { animation-delay: 360ms; }
+
+/* Pulse dot — used in processing status indicators for a calmer pulse. */
+@keyframes gentlePulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+.pulse-gentle {
+  animation: gentlePulse 2s ease-in-out infinite;
+}
+
+/* Page transition — top-mounted progress bar for perceived snappiness. */
+@keyframes pageProgress {
+  0% { width: 0; }
+  50% { width: 60%; }
+  100% { width: 100%; opacity: 0; }
+}
+.page-progress {
+  animation: pageProgress 1.2s var(--ease-out) both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

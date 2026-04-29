@@ -439,13 +439,14 @@ export function SourcesView() {
             }}
           />
         ) : (
-          <ul className="space-y-2">
-            {(visibleSources ?? []).map((s) => (
+          <ul className="space-y-2.5">
+            {(visibleSources ?? []).map((s, idx) => (
               <SourceItem
                 key={s.id}
                 source={s}
                 highlighted={s.id === highlightedId}
                 onRequestDelete={() => setPendingDelete(s)}
+                animationDelay={idx < 10 ? idx * 40 : undefined}
               />
             ))}
           </ul>
@@ -1260,10 +1261,12 @@ function SubmitBtn({
     <button
       type="submit"
       disabled={disabled}
-      className="rounded-md bg-accent hover:bg-accent-strong text-[#0b0d12] font-medium px-4 h-10 text-sm disabled:opacity-60 disabled:cursor-not-allowed"
+      className="btn-press rounded-lg bg-accent hover:bg-accent-strong text-[#0b0d12] font-medium px-4 h-10 text-sm disabled:opacity-60 disabled:cursor-not-allowed"
       style={{
         transition:
           "background-color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out)",
+        boxShadow:
+          "0 1px 0 color-mix(in oklab, white 14%, transparent) inset, 0 1px 2px rgba(0,0,0,0.2)",
       }}
     >
       {children}
@@ -1282,10 +1285,12 @@ function SourceItem({
   source,
   highlighted,
   onRequestDelete,
+  animationDelay,
 }: {
   source: SourceRow;
   highlighted?: boolean;
   onRequestDelete: () => void;
+  animationDelay?: number;
 }) {
   const failed = source.status === "failed";
   const [expanded, setExpanded] = useState(failed);
@@ -1307,15 +1312,12 @@ function SourceItem({
 
   return (
     <li
-      className={`group rounded-xl border bg-surface hover:border-border-strong ${
+      className={`group rounded-xl border bg-surface card-lift stagger-enter ${
         highlighted
           ? "border-accent/50 ring-2 ring-accent/20"
-          : "border-border"
+          : "border-border hover:border-border-strong"
       }`}
-      style={{
-        transition:
-          "border-color var(--dur-med) var(--ease-out), background-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-med) var(--ease-out)",
-      }}
+      style={animationDelay !== undefined ? { animationDelay: `${animationDelay}ms` } : undefined}
     >
       {/* Header — clickable as a single button to toggle expansion. */}
       <div className="flex items-stretch">
