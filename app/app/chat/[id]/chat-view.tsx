@@ -62,7 +62,13 @@ export function ChatView({ conversationId }: { conversationId: string }) {
   const [showJump, setShowJump] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const { toast } = useToast();
+
+  const autoResize = useCallback((el: HTMLTextAreaElement) => {
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 192)}px`;
+  }, []);
   // Citation the user clicked. The drawer reads chunk + neighbours from
   // the backend on its own; we only own the open/close state here.
   const [openCitation, setOpenCitation] = useState<Citation | null>(null);
@@ -293,8 +299,57 @@ export function ChatView({ conversationId }: { conversationId: string }) {
 
   const empty = !loading && items.length === 0 && !loadError;
 
+  // Derive conversation title from the first user message when we don't
+  // have access to the conversation list (the shell owns that). This
+  // provides a contextual header without another API call.
+  const derivedTitle = items.find(
+    (it) => it.kind === "stored" && it.message.role === "user",
+  );
+  const headerTitle = derivedTitle
+    ? (derivedTitle as { kind: "stored"; message: Message }).message.content.slice(0, 80)
+    : null;
+
   return (
     <div className="flex-1 flex flex-col min-h-0">
+      {/* Page header — contextual breadcrumb with conversation snippet */}
+      <header className="shrink-0 flex items-center gap-3 px-4 md:px-6 h-14 border-b border-border bg-[color-mix(in_oklab,var(--surface)_50%,transparent)] backdrop-blur-md">
+        <span
+          aria-hidden
+          className="hidden md:inline-flex h-7 w-7 items-center justify-center rounded-lg bg-accent/10 text-accent border border-accent/20"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+            <path
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M21 12a8 8 0 01-11.6 7.1L4 20l1-4.6A8 8 0 1121 12z"
+            />
+          </svg>
+        </span>
+        <div className="min-w-0 flex-1">
+          {loading ? (
+            <div className="skeleton h-4 w-48" />
+          ) : headerTitle ? (
+            <h1
+              className="text-[14px] font-medium text-foreground truncate"
+              title={headerTitle}
+            >
+              {headerTitle}
+            </h1>
+          ) : (
+            <h1 className="text-[14px] font-medium text-foreground-muted">
+              New conversation
+            </h1>
+          )}
+        </div>
+        {items.length > 0 ? (
+          <span className="shrink-0 text-[11px] text-foreground-subtle tabular-nums">
+            {items.filter((it) => it.kind === "stored" && it.message.role === "user").length} messages
+          </span>
+        ) : null}
+      </header>
+
       {loadError ? (
         <div className="p-4">
           <div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
@@ -306,23 +361,23 @@ export function ChatView({ conversationId }: { conversationId: string }) {
       <div ref={scrollRef} className="relative flex-1 overflow-y-auto">
         <div className="mx-auto max-w-3xl px-4 md:px-6 py-8 space-y-6">
           {empty ? <ChatEmpty onPick={(q) => setInput(q)} /> : null}
-          {items.map((it, i) =>
-            it.kind === "stored" ? (
-              <StoredMessage
-                key={it.message.id}
-                message={it.message}
-                onCopy={(text) => copyAnswer(text, toast)}
-                onOpenCitation={setOpenCitation}
-              />
-            ) : (
-              <AssistantStream
-                key={`s-${i}`}
-                message={it.message}
-                onCopy={(text) => copyAnswer(text, toast)}
-                onOpenCitation={setOpenCitation}
-              />
-            ),
-          )}
+          {items.map((it, i) => (
+            <div key={it.kind === "stored" ? it.message.id : `s-${i}`} className="stagger-enter" style={{ animationDelay: `${Math.min(i * 30, 300)}ms` }}>
+              {it.kind === "stored" ? (
+                <StoredMessage
+                  message={it.message}
+                  onCopy={(text) => copyAnswer(text, toast)}
+                  onOpenCitation={setOpenCitation}
+                />
+              ) : (
+                <AssistantStream
+                  message={it.message}
+                  onCopy={(text) => copyAnswer(text, toast)}
+                  onOpenCitation={setOpenCitation}
+                />
+              )}
+            </div>
+          ))}
         </div>
         {showJump ? (
           <JumpToLatestButton
@@ -337,74 +392,85 @@ export function ChatView({ conversationId }: { conversationId: string }) {
         onClose={() => setOpenCitation(null)}
       />
 
-      {/* Composer — single layered surface with primary-ring focus glow. */}
-      <div className="border-t border-border bg-[color-mix(in_oklab,var(--bg-primary)_82%,transparent)] backdrop-blur-md px-4 py-3.5">
+      {/* Composer — layered surface with glow ring on focus. */}
+      <div className="shrink-0 border-t border-border bg-[color-mix(in_oklab,var(--bg-primary)_82%,transparent)] backdrop-blur-md px-4 py-3">
         <div className="mx-auto max-w-3xl">
           <div
-            className="group flex items-end gap-2 rounded-xl border border-border bg-surface shadow-sm focus-within:border-accent/70"
+            className="group flex items-end gap-2 rounded-2xl border border-border bg-surface glow-ring focus-within:border-accent/60"
             style={{
               transition:
-                "border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out)",
+                "border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-med) var(--ease-out)",
               boxShadow: "var(--shadow-sm)",
             }}
           >
             <textarea
+              ref={textareaRef}
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => {
+                setInput(e.target.value);
+                autoResize(e.target);
+              }}
               onKeyDown={onKeyDown}
               rows={1}
               placeholder="Ask anything about your knowledge base…"
-              className="flex-1 resize-none bg-transparent px-4 py-3 text-[15px] leading-relaxed focus:outline-none max-h-48 placeholder:text-foreground-subtle"
+              className="flex-1 resize-none bg-transparent px-4 py-3.5 text-[15px] leading-relaxed focus:outline-none placeholder:text-foreground-subtle"
+              style={{ maxHeight: "12rem", overflow: "auto" }}
             />
-            {streaming ? (
-              <button
-                onClick={() => abortRef.current?.abort()}
-                className="m-1.5 inline-flex items-center gap-1.5 rounded-md bg-surface-2 hover:bg-border text-foreground-muted hover:text-foreground px-3 h-9 text-sm"
-                style={{
-                  transition:
-                    "background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out)",
-                }}
-              >
-                <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden>
-                  <rect x="2" y="2" width="8" height="8" rx="1.5" fill="currentColor" />
-                </svg>
-                Stop
-              </button>
-            ) : (
-              <button
-                onClick={send}
-                disabled={!input.trim()}
-                aria-label="Send message"
-                className="m-1.5 inline-flex items-center gap-1.5 rounded-md bg-accent hover:bg-accent-strong text-[#0b0d12] font-medium px-3.5 h-9 text-sm disabled:opacity-40 disabled:cursor-not-allowed"
-                style={{
-                  transition:
-                    "background-color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out)",
-                }}
-              >
-                Send
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-                  <path
-                    stroke="currentColor"
-                    strokeWidth="2.2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M5 12h14M13 6l6 6-6 6"
-                  />
-                </svg>
-              </button>
-            )}
+            <div className="flex items-center gap-1.5 m-2">
+              {streaming ? (
+                <button
+                  onClick={() => abortRef.current?.abort()}
+                  className="btn-press inline-flex items-center gap-1.5 rounded-lg bg-surface-2 hover:bg-border text-foreground-muted hover:text-foreground px-3 h-9 text-[13px] font-medium"
+                  style={{
+                    transition:
+                      "background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out)",
+                  }}
+                >
+                  <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden>
+                    <rect x="2" y="2" width="8" height="8" rx="1.5" fill="currentColor" />
+                  </svg>
+                  Stop
+                </button>
+              ) : (
+                <button
+                  onClick={send}
+                  disabled={!input.trim()}
+                  aria-label="Send message"
+                  className="btn-press inline-flex items-center justify-center rounded-lg bg-accent hover:bg-accent-strong text-[#0b0d12] font-medium h-9 w-9 disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={{
+                    transition:
+                      "background-color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out)",
+                    boxShadow:
+                      "0 1px 0 color-mix(in oklab, white 14%, transparent) inset, 0 1px 2px rgba(0,0,0,0.2)",
+                  }}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+                    <path
+                      stroke="currentColor"
+                      strokeWidth="2.2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M5 12h14M13 6l6 6-6 6"
+                    />
+                  </svg>
+                </button>
+              )}
+            </div>
           </div>
-          <p className="mt-2 text-[11.5px] text-foreground-subtle text-center">
-            Grounded in your sources.{" "}
-            <kbd className="px-1 py-0.5 rounded border border-border bg-surface-2 text-[10.5px] font-mono text-foreground-muted">
-              Enter
-            </kbd>{" "}
-            to send,{" "}
-            <kbd className="px-1 py-0.5 rounded border border-border bg-surface-2 text-[10.5px] font-mono text-foreground-muted">
-              Shift+Enter
-            </kbd>{" "}
-            for newline.
-          </p>
+          <div className="mt-1.5 flex items-center justify-center gap-3 text-[11px] text-foreground-subtle">
+            <span className="inline-flex items-center gap-1">
+              <kbd className="px-1 py-0.5 rounded border border-border bg-surface-2 text-[10px] font-mono text-foreground-muted">
+                Enter
+              </kbd>
+              <span>send</span>
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <kbd className="px-1 py-0.5 rounded border border-border bg-surface-2 text-[10px] font-mono text-foreground-muted">
+                Shift+Enter
+              </kbd>
+              <span>newline</span>
+            </span>
+          </div>
         </div>
       </div>
     </div>
@@ -424,7 +490,7 @@ function StoredMessage({
   onOpenCitation: (c: Citation) => void;
 }) {
   if (message.role === "user") {
-    return <UserBubble content={message.content} />;
+    return <UserBubble content={message.content} timestamp={message.created_at} />;
   }
   return (
     <AssistantBubble
@@ -432,6 +498,7 @@ function StoredMessage({
       reasoning={message.reasoning ?? []}
       citations={message.citations ?? []}
       streaming={false}
+      timestamp={message.created_at}
       onCopy={onCopy}
       onOpenCitation={onOpenCitation}
     />
@@ -460,9 +527,15 @@ function AssistantStream({
   );
 }
 
-function UserBubble({ content }: { content: string }) {
+
+function UserBubble({ content, timestamp }: { content: string; timestamp?: string }) {
   return (
-    <div className="flex justify-end">
+    <div className="group/msg flex justify-end gap-2 items-end">
+      {timestamp ? (
+        <span className="shrink-0 text-[10.5px] text-foreground-subtle tabular-nums opacity-0 group-hover/msg:opacity-100 transition-opacity pb-1.5">
+          {formatMessageTime(timestamp)}
+        </span>
+      ) : null}
       <div className="max-w-[85%] rounded-2xl rounded-br-md bg-accent text-[#0b0d12] px-4 py-2.5 text-[14.5px] leading-relaxed whitespace-pre-wrap shadow-sm">
         {content}
       </div>
@@ -476,6 +549,7 @@ function AssistantBubble({
   citations,
   streaming,
   error,
+  timestamp,
   onCopy,
   onOpenCitation,
 }: {
@@ -484,6 +558,7 @@ function AssistantBubble({
   citations: Citation[];
   streaming: boolean;
   error?: string;
+  timestamp?: string;
   onCopy: (text: string) => void;
   onOpenCitation: (c: Citation) => void;
 }) {
@@ -491,7 +566,7 @@ function AssistantBubble({
   // a partial mid-stream answer is rarely what the user wants.
   const canCopy = !streaming && content.trim().length > 0;
   return (
-    <div className="flex gap-3">
+    <div className="group/msg flex gap-3">
       {/* Avatar rail — a small amber dot doubles as "this is the assistant"
           and echoes the streaming-caret color language. */}
       <div aria-hidden className="shrink-0 pt-1.5">
@@ -535,6 +610,11 @@ function AssistantBubble({
             citations={citations}
             onOpenCitation={onOpenCitation}
           />
+        ) : null}
+        {timestamp && !streaming ? (
+          <span className="mt-2 block text-[10.5px] text-foreground-subtle tabular-nums opacity-0 group-hover/msg:opacity-100 transition-opacity">
+            {formatMessageTime(timestamp)}
+          </span>
         ) : null}
       </div>
     </div>
@@ -961,6 +1041,26 @@ function CitationsBar({
       ))}
     </div>
   );
+}
+
+function formatMessageTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const now = new Date();
+  const isToday =
+    d.getDate() === now.getDate() &&
+    d.getMonth() === now.getMonth() &&
+    d.getFullYear() === now.getFullYear();
+  const time = d.toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  if (isToday) return time;
+  const date = d.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+  return `${date}, ${time}`;
 }
 
 const SUGGESTED_PROMPTS = [
