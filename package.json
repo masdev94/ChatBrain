@@ -6,7 +6,11 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "db:push": "node scripts/db-push.mjs",
+    "db:push:dry": "node scripts/db-push.mjs --dry",
+    "db:status": "node scripts/db-status.mjs",
+    "setup": "npm install && npm run db:push"
   },
   "dependencies": {
     "@supabase/ssr": "^0.10.2",
@@ -24,6 +28,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
+    "supabase": "^2.95.6",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
